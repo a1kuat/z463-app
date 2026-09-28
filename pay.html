@@ -259,7 +259,8 @@
     [['author','Заявителю — '+(it.author||'автор')],
      ['alua','Согласующему — '+(it.approver||'Алуа')],
      ['amankali','Владельцу — '+(D.ownerName||'Аманкали')],
-     ['yersayin','Второму казначею — '+(D.payer2Name||'Ерсайын')]].forEach(function(x){
+     ['laura','Казначею'],
+     ['yersayin','Казначею счетов компании — '+(D.payer2Name||'Ерсайын')]].forEach(function(x){
       var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; sel.appendChild(o);
     });
     var ta = document.createElement('textarea');
