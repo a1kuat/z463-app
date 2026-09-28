@@ -255,7 +255,7 @@
         var no=el('button','no','❌ Отклонить');
         no.onclick=function(){ askReason(c, it); };
         var qq=el('button','','❓ Вопрос');
-        qq.onclick=function(){ askText(c, it, 'q', 'Вопрос заявителю — уйдёт '+it.author); };
+        qq.onclick=function(){ askWho(c, it); };
         row.appendChild(ok); row.appendChild(no); row.appendChild(qq);
         c.appendChild(row);
       }
@@ -281,6 +281,42 @@
     row.appendChild(go); row.appendChild(cancel);
     w.appendChild(sel); w.appendChild(ta); w.appendChild(row);
     card.appendChild(w); sel.focus();
+  }
+
+  // Вопрос с выбором адресата. Заявителю — это решение по заявке: статус
+  // становится «Вопрос», и она ждёт ответа. Остальным — просто сообщение:
+  // заявка из очереди не уходит, потому что решение всё равно за вами.
+  function askWho(card, it){
+    var w=el('div','ask');
+    var sel=document.createElement('select');
+    [['author','Заявителю — '+it.author+' (заявка встанет на паузу)'],
+     ['alua','Согласующему RUN'],
+     ['amankali','Владельцу'],
+     ['laura','Казначею'],
+     ['yersayin','Казначею счетов компании']].forEach(function(x){
+      var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; sel.appendChild(o);
+    });
+    var ta=document.createElement('textarea'); ta.rows=2; ta.placeholder='Вопрос одним сообщением';
+    var row=el('div','row');
+    var go=el('button','ok','Отправить');
+    go.onclick=function(){
+      var t=ta.value.trim();
+      if(t.length<3){ err('Напишите вопрос.'); return; }
+      if(sel.value==='author'){ act(it,'q',t); return; }   // меняет статус на «Вопрос»
+      go.disabled=true; go.textContent='Отправляю…';
+      api('ask',{num:it.num, to:sel.value, text:t, as:S.as}).then(function(r){
+        if(!r || !r.ok){ err((r && r.err)||'Не отправилось.'); go.disabled=false; go.textContent='Отправить'; return; }
+        w.remove(); err('❓ Вопрос отправлен: '+r.to+'. Ответ придёт вам сообщением.');
+      }).catch(function(){
+        err('Ответ не пришёл. Проверьте чат, прежде чем отправлять снова.');
+        go.disabled=false; go.textContent='Отправить';
+      });
+    };
+    var cancel=el('button','','Отмена');
+    cancel.onclick=function(){ w.remove(); };
+    row.appendChild(go); row.appendChild(cancel);
+    w.appendChild(sel); w.appendChild(ta); w.appendChild(row);
+    card.appendChild(w); ta.focus();
   }
 
   function askText(card, it, action, title){
