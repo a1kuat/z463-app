@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Z-463 · Статус заявок</title>
+<meta name="z463-page" content="status">
+<!--
+  ФИНЦЕНТР Z-463 — страница согласующего. Репозиторий z463-app.
+  Версия 1.0 · 26.09.2026
+
+  Показывает то, что ждёт решения ИМЕННО этого человека: своя линия,
+  поднятое владельцу и заявки, по которым он сам задал вопрос. Правила
+  отбора — те же, что у команды /ожидание, считает их сервер.
+
+  Три действия на заявку: одобрить, отклонить с причиной, задать вопрос.
+  Право на каждое проверяет сервер заново — страница ничего не решает.
+
+  «Смотреть как» — для ИТ-хранителя (параметр ИТ_АДМИН). Он открывает
+  страницу глазами любого человека, но только смотрит: нажать за другого
+  нельзя, иначе в журнале осталось бы чужое имя. Проверять действия —
+  тестовой заявкой «ТЕСТ …», там он играет все роли по своей заявке.
+-->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:      var(--tg-theme-bg-color, #ffffff);
+    --fg:      var(--tg-theme-text-color, #000000);
+    --muted:   var(--tg-theme-hint-color, #8b8b8b);
+    --card:    var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --accent:  var(--tg-theme-button-color, #2481cc);
+    --onAccent:var(--tg-theme-button-text-color, #ffffff);
+    --danger:  #d64545;
+    --line:    rgba(128,128,128,.22);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg); }
+  body{
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 12px 16px 120px;
+  }
+  h1{ font-size:20px; font-weight:600; margin:4px 0 2px; }
+  .who{ color:var(--muted); font-size:14px; margin-bottom:20px; }
+
+  label{ display:block; font-size:14px; color:var(--muted); margin:0 0 6px; }
+  .field{ margin-bottom:20px; }
+
+  input[type=text], input[type=tel], textarea{
+    width:100%; font:inherit; color:var(--fg); background:var(--card);
+    border:1px solid transparent; border-radius:12px; padding:13px 14px;
+    appearance:none;
+  }
+  input:focus, textarea:focus{ outline:none; border-color:var(--accent); }
+  textarea{ resize:none; min-height:76px; }
+
+  /* Сумма — единственный крупный элемент. Её проверяют и заявитель,
+     и согласующий, поэтому она должна читаться с вытянутой руки. */
+  #sum{ font-size:30px; font-weight:600; letter-spacing:-0.5px; padding:14px; }
+  .sumRow{ display:flex; align-items:baseline; gap:10px; }
+  .sumRow .cur{ font-size:20px; color:var(--muted); }
+
+  .opts{ display:flex; gap:10px; }
+  .opt{
+    flex:1; text-align:center; padding:13px 8px; border-radius:12px;
+    background:var(--card); border:1.5px solid transparent; cursor:pointer;
+    font-size:15px; user-select:none;
+  }
+  .opt[aria-pressed="true"]{ border-color:var(--accent); color:var(--accent); font-weight:600; }
+
+  .check{ display:flex; align-items:center; gap:12px; padding:13px 14px;
+          background:var(--card); border-radius:12px; cursor:pointer; }
+  .check input{ width:20px; height:20px; accent-color:var(--accent); margin:0; flex:none; }
+  .check span{ font-size:15px; }
+  .check small{ display:block; color:var(--muted); font-size:13px; }
+
+  .found{ margin-top:8px; border-radius:12px; overflow:hidden; background:var(--card); }
+  .found div{ padding:12px 14px; border-bottom:1px solid var(--line); cursor:pointer; font-size:15px; }
+  .found div:last-child{ border-bottom:none; }
+  .picked{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+           background:var(--card); border-radius:12px; padding:13px 14px; }
+  .picked b{ font-weight:600; }
+  .picked button{ background:none; border:none; color:var(--accent); font:inherit;
+                  padding:0; cursor:pointer; flex:none; }
+
+  .submit{
+    position:fixed; left:0; right:0; bottom:0; padding:12px 16px 20px;
+    background:linear-gradient(to top, var(--bg) 72%, transparent);
+  }
+  .submit button{
+    width:100%; padding:16px; font:inherit; font-size:17px; font-weight:600;
+    background:var(--accent); color:var(--onAccent); border:none; border-radius:12px;
+    cursor:pointer;
+  }
+  .submit button[disabled]{ opacity:.45; }
+
+  .msg{ padding:14px; border-radius:12px; font-size:15px; margin-bottom:18px;
+        background:rgba(214,69,69,.13); color:var(--danger); }
+  .msg small{ display:block; margin-top:8px; color:var(--muted); font-size:13px; }
+  .hint{ color:var(--muted); font-size:13px; margin-top:6px; }
+  .attach{ width:100%; padding:14px; border-radius:12px; font-size:16px; cursor:pointer;
+    border:1px dashed var(--hint,#8a8a8e); background:transparent; color:var(--link,#2481cc); }
+  .attach:active{ opacity:.7; }
+  .fileRow{ display:flex; align-items:center; gap:8px; margin-top:8px; font-size:14px; }
+  .fileRow span{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fileRow button{ border:0; background:transparent; color:var(--destr,#e53935); font-size:15px; cursor:pointer; }
+
+  .card{ background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .card h3{ margin:0 0 4px; font-size:17px; font-weight:600; }
+  .card .meta{ color:var(--muted); font-size:13px; margin-bottom:2px; }
+  .card .sum{ font-size:22px; font-weight:600; margin:6px 0 8px; }
+  .row{ display:flex; gap:8px; margin-top:10px; }
+  .row button{ flex:1; padding:11px 6px; font:inherit; font-size:15px; border:none;
+    border-radius:10px; cursor:pointer; background:var(--bg); color:var(--fg); }
+  .row .ok{ background:var(--accent); color:var(--onAccent); font-weight:600; }
+  .row .no{ color:var(--danger); }
+  .tag{ display:inline-block; font-size:12px; padding:2px 8px; border-radius:99px;
+    background:var(--bg); color:var(--muted); margin-right:6px; }
+  .tag.urg{ color:var(--danger); }
+  .bar{ display:flex; gap:8px; align-items:center; margin-bottom:14px; }
+  .bar select{ flex:1; font:inherit; padding:10px; border-radius:10px;
+    background:var(--card); color:var(--fg); border:1px solid transparent; }
+  .view{ background:rgba(214,69,69,.13); color:var(--danger); padding:10px 12px;
+    border-radius:10px; font-size:14px; margin-bottom:14px; }
+  .ask{ margin-top:10px; }
+  .ask select, .ask textarea{ width:100%; font:inherit; margin-top:8px; padding:11px;
+    border-radius:10px; background:var(--bg); color:var(--fg); border:1px solid transparent; }
+  .empty{ text-align:center; color:var(--muted); padding:50px 20px; }
+  .hidden{ display:none !important; }
+
+  .done{ text-align:center; padding:56px 20px; }
+  .done .num{ font-size:40px; font-weight:600; margin:14px 0 6px; }
+  .done p{ color:var(--muted); margin:0 0 26px; }
+  .done button{ font:inherit; font-size:16px; padding:14px 30px; border:none;
+                border-radius:12px; background:var(--card); color:var(--fg); cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="loading" class="who">Загружаю…</div>
+<div id="blocked" class="hidden"><div class="msg" id="blockedText"></div></div>
+
+<div id="app" class="hidden">
+  <h1 id="ttl">На вашем решении</h1>
+  <div class="who" id="who"></div>
+
+  <div class="bar hidden" id="asBar">
+    <span style="color:var(--muted);font-size:14px">Смотреть как</span>
+    <select id="asSel"></select>
+  </div>
+  <div class="view hidden" id="viewNote"></div>
+
+  <div id="err" class="msg hidden"></div>
+  <div id="list"></div>
+  <div class="empty hidden" id="empty">Ничего не ждёт вашего решения.</div>
+</div>
+
+<div class="submit" id="bar">
+  <button id="newReq">📝 Подать заявку</button>
+</div>
+
+<script>
+(function(){
+  var Q = new URLSearchParams(location.search);
+  var API_URL = (function(){
+    var q = Q.get('api') || '';
+    return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(q) ? q : '';
+  })();
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var initData = tg ? (tg.initData || '') : '';
+  if(tg){ tg.ready(); tg.expand(); }
+
+  var S = { as:'', view:false, reasons:[], busy:{} };
+  function $(id){ return document.getElementById(id); }
+  function show(el,on){ el.classList[on?'remove':'add']('hidden'); }
+  function money(n){ return Number(n||0).toLocaleString('ru-RU').replace(/,/g,' ')+' ₸'; }
+  function stop(html){
+    show($('loading'),false); show($('app'),false); show($('bar'),false);
+    $('blockedText').innerHTML = html; show($('blocked'),true);
+  }
+  function err(t){ var e=$('err'); if(!t){ show(e,false); return; } e.textContent=t; show(e,true); }
+
+  function api(action, data){
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var t = ctl ? setTimeout(function(){ try{ ctl.abort(); }catch(e){} }, 30000) : null;
+    return fetch(API_URL, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({action:action, initData:initData, data:data||{}}),
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(r){ return r.text(); })
+      .then(function(x){ if(t) clearTimeout(t); return JSON.parse(x); },
+            function(e){ if(t) clearTimeout(t); throw e; });
+  }
+
+  if(!initData){ stop('Эта страница открывается только из Telegram — кнопкой «Статус» в чате с ботом.'); return; }
+  if(!API_URL){ stop('Кнопка настроена не до конца.<small>Азамату: «⚙️ ФИНЦЕНТР → Настроить Mini App».</small>'); return; }
+
+  function load(){
+    api('statusInit', {as:S.as}).then(function(r){
+      if(!r || !r.ok){ stop((r && r.err) || 'Не удалось открыть.'); return; }
+      S.view = !!r.view; S.reasons = r.reasons || [];
+      show($('loading'),false); show($('app'),true); show($('bar'), !S.view);
+      $('who').textContent = r.name + (r.items.length ? ' · ' + r.items.length + ' на ' + money(r.total) : '');
+      if(r.admin){
+        show($('asBar'),true);
+        var sel=$('asSel');
+        if(!sel.options.length){
+          sel.innerHTML='';
+          ['(я сам)'].concat(r.people).forEach(function(n){
+            var o=document.createElement('option'); o.value=(n==='(я сам)'?'':n); o.textContent=n; sel.appendChild(o);
+          });
+          sel.value = S.as;
+          sel.addEventListener('change', function(){ S.as = sel.value; draw([]); load(); });
+        }
+      }
+      show($('viewNote'), S.view);
+      if(S.view) $('viewNote').textContent='Вы смотрите глазами '+r.name+'. Только просмотр: нажимать за человека нельзя. Проверить действия — заявкой «ТЕСТ …».';
+      draw(r.items);
+    }).catch(function(e){
+      stop('Сервер не отвечает.<small>'+String(e && e.message || e).slice(0,160)+'</small>');
+    });
+  }
+
+  function el(tag, cls, text){
+    var n=document.createElement(tag);
+    if(cls) n.className=cls;
+    if(text!=null) n.textContent=text;
+    return n;
+  }
+
+  function draw(items){
+    var box=$('list'); box.innerHTML='';
+    show($('empty'), !items.length);
+    items.forEach(function(it){
+      var c=el('div','card');
+      var top=el('div');
+      if(it.urgent) top.appendChild(el('span','tag urg','🚨 срочно'));
+      top.appendChild(el('span','tag', it.line==='BUILD'?'Развитие':'Текущая'));
+      if(it.status!=='Подана') top.appendChild(el('span','tag', it.status));
+      top.appendChild(el('span','tag', it.days+' дн.'));
+      c.appendChild(top);
+      c.appendChild(el('h3','', '№'+it.num+' · '+it.sup));
+      c.appendChild(el('div','sum', money(it.sum)));
+      if(it.what) c.appendChild(el('div','meta', it.what));
+      if(it.noDoc) c.appendChild(el('div','meta','⚠️ Без документа: '+it.noDoc));
+      c.appendChild(el('div','meta','Автор: '+it.author+' · '+(it.unit||'—')+' · '+it.cash));
+      if(it.entity) c.appendChild(el('div','meta','🏛 '+it.entity));
+      if(it.doc) c.appendChild(el('div','meta','📄 '+it.doc));
+      if(it.due) c.appendChild(el('div','meta','📅 срок '+it.due));
+      c.appendChild(el('div','meta', it.hasDoc ? '📎 Счёт приложен — пришёл сообщением в чат' : '📎 Счёта нет'));
+
+      if(!S.view){
+        var row=el('div','row');
+        var ok=el('button','ok','✅ Одобрить');
+        ok.onclick=function(){ act(it, 'ap', ''); };
+        var no=el('button','no','❌ Отклонить');
+        no.onclick=function(){ askReason(c, it); };
+        var qq=el('button','','❓ Вопрос');
+        qq.onclick=function(){ askText(c, it, 'q', 'Вопрос заявителю — уйдёт '+it.author); };
+        row.appendChild(ok); row.appendChild(no); row.appendChild(qq);
+        c.appendChild(row);
+      }
+      box.appendChild(c);
+    });
+  }
+
+  // Причина отклонения — теми же формулировками, что в боте: так решения
+  // одинаково читаются в чате и в таблице.
+  function askReason(card, it){
+    var w=el('div','ask');
+    var sel=document.createElement('select');
+    S.reasons.concat(['✍️ Своя причина']).forEach(function(t,i){
+      var o=document.createElement('option'); o.value=(i<S.reasons.length?t:''); o.textContent=t; sel.appendChild(o);
+    });
+    var ta=document.createElement('textarea'); ta.placeholder='Причина'; ta.rows=2; ta.classList.add('hidden');
+    sel.addEventListener('change', function(){ show(ta, !sel.value); if(!sel.value) ta.focus(); });
+    var row=el('div','row');
+    var go=el('button','no','Отклонить');
+    go.onclick=function(){ act(it,'rj', sel.value || ta.value.trim()); };
+    var cancel=el('button','','Отмена');
+    cancel.onclick=function(){ w.remove(); };
+    row.appendChild(go); row.appendChild(cancel);
+    w.appendChild(sel); w.appendChild(ta); w.appendChild(row);
+    card.appendChild(w); sel.focus();
+  }
+
+  function askText(card, it, action, title){
+    var w=el('div','ask');
+    w.appendChild(el('div','meta', title));
+    var ta=document.createElement('textarea'); ta.rows=2; ta.placeholder='Текст';
+    var row=el('div','row');
+    var go=el('button','ok','Отправить');
+    go.onclick=function(){ act(it, action, ta.value.trim()); };
+    var cancel=el('button','','Отмена');
+    cancel.onclick=function(){ w.remove(); };
+    row.appendChild(go); row.appendChild(cancel);
+    w.appendChild(ta); w.appendChild(row);
+    card.appendChild(w); ta.focus();
+  }
+
+  function act(it, action, text){
+    if(S.busy[it.num]) return;
+    S.busy[it.num]=true; err('');
+    api('decide', {num:it.num, act:action, text:text, as:S.as}).then(function(r){
+      S.busy[it.num]=false;
+      if(!r || !r.ok){ err((r && r.err) || 'Не получилось.'); return; }
+      if(tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      load();
+    }).catch(function(){
+      S.busy[it.num]=false;
+      err('Ответ не пришёл. Обновите страницу и посмотрите, изменился ли статус, прежде чем нажимать снова.');
+    });
+  }
+
+  // Подача никуда не делась: кнопка меню занята «Статусом», но форма
+  // открывается отсюда — иначе владелец остался бы без способа подать заявку.
+  $('newReq').addEventListener('click', function(){
+    location.href = 'index.html?api=' + encodeURIComponent(API_URL);
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
