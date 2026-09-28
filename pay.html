@@ -149,6 +149,11 @@
   .go:disabled{ opacity:.45; cursor:default; }
   .go.route{ background:var(--bg2); color:var(--tx); }
   .alt{ display:block; margin:10px auto 0; background:none; border:0; color:var(--red); padding:6px; cursor:pointer; font-size:14px; }
+.askSel,.askTa{ width:100%; font:inherit; margin:8px 0 0; padding:10px; border-radius:var(--r-ctl);
+    background:var(--bg); color:var(--tx); border:1px solid var(--hint); }
+  .askRow{ display:flex; gap:8px; margin-top:8px; }
+  .askRow button{ flex:1; padding:10px; font:inherit; border:0; border-radius:var(--r-ctl);
+    background:var(--bg); color:var(--tx); cursor:pointer; }
   .clip{ width:100%; border:1px dashed var(--hint); border-radius:var(--r-ctl); padding:11px; margin:0 0 10px;
     background:none; color:var(--acc); font-size:15px; cursor:pointer; }
   .clip:disabled{ opacity:.5; }
@@ -238,6 +243,50 @@
   var lastAcc = {};        // «юрлицо|нал» → счёт, выбранный в этой сессии
 
   var $ = function(id){ return document.getElementById(id); };
+// ---------- вопрос по заявке ----------
+  var askOpen = {};      // num → открыта ли форма вопроса
+  function askBox(it, dis){
+    var wrap = el('div','askw');
+    if(!askOpen[it.num]){
+      var b = el('button','clip','❓ Задать вопрос по заявке');
+      b.type='button'; b.disabled = dis;
+      b.onclick = function(){ askOpen[it.num] = true; render(); };
+      wrap.appendChild(b);
+      return wrap;
+    }
+    var sel = document.createElement('select');
+    sel.className = 'askSel';
+    [['author','Заявителю — '+(it.author||'автор')],
+     ['alua','Согласующему — '+(it.approver||'Алуа')],
+     ['amankali','Владельцу — '+(D.ownerName||'Аманкали')],
+     ['yersayin','Второму казначею — '+(D.payer2Name||'Ерсайын')]].forEach(function(x){
+      var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; sel.appendChild(o);
+    });
+    var ta = document.createElement('textarea');
+    ta.className='askTa'; ta.rows=2; ta.placeholder='Вопрос одним сообщением';
+    var row = el('div','askRow');
+    var go = el('button','','Отправить');
+    go.onclick = function(){
+      var t = ta.value.trim();
+      if(t.length<3){ errOf[it.num]='Напишите вопрос.'; render(); return; }
+      go.disabled = true; go.textContent = 'Отправляю…';
+      api('ask', {num:it.num, to:sel.value, text:t}).then(function(r){
+        if(!r || !r.ok){ errOf[it.num] = (r && r.err) || 'Не отправилось.'; go.disabled=false; go.textContent='Отправить'; render(); return; }
+        askOpen[it.num] = false;
+        errOf[it.num] = '❓ Вопрос отправлен: ' + r.to + '. Ответ придёт вам сообщением.';
+        render();
+      }).catch(function(){
+        errOf[it.num] = 'Ответ не пришёл. Проверьте чат, прежде чем отправлять снова.';
+        go.disabled=false; go.textContent='Отправить'; render();
+      });
+    };
+    var cancel = el('button','','Отмена');
+    cancel.onclick = function(){ askOpen[it.num]=false; render(); };
+    row.appendChild(go); row.appendChild(cancel);
+    wrap.appendChild(sel); wrap.appendChild(ta); wrap.appendChild(row);
+    return wrap;
+  }
+
   function el(tag, cls, text){
     var n = document.createElement(tag);
     if(cls) n.className = cls;
@@ -570,6 +619,12 @@
     // срабатывал ни у одного казначея. После отметки оплаты под сообщением
     // «Оплачено» появляется кнопка «🧾 Приложить платёжку» — она открывает
     // отдельную страницу, устроенную как форма подачи.
+
+    // Вопрос по заявке. Адресата казначей выбирает сам: по одной и той же
+    // заявке спрашивать приходится и у заявителя, и у согласующего, и у
+    // второго казначея. Статус при этом не меняется — заявка остаётся в
+    // очереди: платёж никто не отменял, казначей просто уточняет.
+    b.appendChild(askBox(it, dis));
 
     var go = el('button','go', dis ? 'Отмечаю…' : 'Отметить оплату ' + money(cur));
     go.type = 'button'; go.id = 'go'+it.num;
