@@ -8,7 +8,11 @@
 <!--
   ФИНЦЕНТР Z-463 — экран казначея. Лежит в репозитории z463-app рядом с index.html.
 
-  Версия 1.3 · 23.09.2026
+  Версия 1.4 · 29.09.2026
+
+  v1.4: внизу кнопка «Подать заявку» — казначеям незачем уходить на другую
+  страницу ради своих же расходов. Показывается только если сервер прислал
+  canSubmit: право решает он, страница лишь отражает ответ.
 
   v1.2: платёжку можно приложить прямо здесь — она уходит заявителю и
   ложится на Диск рядом со счётом. Необязательно: банк иногда отдаёт чек
@@ -67,6 +71,12 @@
     font:15px/1.4 -apple-system, "SF Pro Text", Roboto, "Segoe UI", system-ui, sans-serif;
     -webkit-text-size-adjust:100%; }
   body{ padding:12px 12px calc(24px + env(safe-area-inset-bottom)); max-width:640px; margin:0 auto; }
+  body.hasbar{ padding-bottom:calc(96px + env(safe-area-inset-bottom)); }
+  /* Кнопка подачи — та же, что на странице статуса, чтобы экраны не разъезжались. */
+  .submit{ position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(20px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, var(--bg) 72%, transparent); }
+  .submit button{ width:100%; padding:16px; font:inherit; font-size:17px; font-weight:600;
+    background:var(--acc); color:var(--acc-tx); border:none; border-radius:12px; cursor:pointer; }
   button{ font:inherit; color:inherit; }
   .num{ font-variant-numeric: tabular-nums; }
   :focus-visible{ outline:2px solid var(--acc); outline-offset:2px; }
@@ -212,6 +222,10 @@
      при каждой перерисовке, и поле внутри карточки исчезало бы, пока
      открыт выбор файла. -->
 <input type="file" id="pick" accept="image/*,application/pdf" multiple hidden>
+
+<div class="submit" id="bar" hidden>
+  <button id="newReq" type="button">📝 Подать заявку</button>
+</div>
 
 <script>
 (function(){
@@ -407,6 +421,12 @@
     $('state').hidden = true;
     $('top').hidden = false;
     $('tabs').hidden = false;
+    // Кнопку подачи показываем по ответу сервера, а не по роли на странице.
+    var bar = $('bar');
+    if(bar){
+      bar.hidden = !(D && D.canSubmit);
+      document.body.classList.toggle('hasbar', !bar.hidden);
+    }
     $('tabQ').setAttribute('aria-pressed', String(tab==='queue'));
     $('tabH').setAttribute('aria-pressed', String(tab==='history'));
     $('tabQ').textContent = 'К оплате' + (left().length ? ' ' + left().length : '');
@@ -848,6 +868,11 @@
   }
 
   $('reload').onclick = load;
+  $('newReq').onclick = function(){
+    // Тот же путь, что со страницы статуса: форма подачи — index.html,
+    // адрес сервера передаём параметром, как везде.
+    location.href = 'index.html?api=' + encodeURIComponent(API);
+  };
   $('tabQ').onclick = function(){ tab = 'queue'; render(); };
   $('tabH').onclick = function(){ tab = 'history'; render(); window.scrollTo(0,0); };
   load();
