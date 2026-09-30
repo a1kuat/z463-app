@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="z463-page" content="admin">
+<title>ФИНЦЕНТР RW · Админ</title>
+<!--
+  ФИНЦЕНТР RW — страница ИТ-хранителя. Репозиторий z463-app.
+  Версия 1.0 · 30.09.2026
+
+  Здесь нет ни данных, ни действий — только выбор, чью страницу открыть.
+  Сами страницы (status.html, pay.html) получают ?as=Имя и включают режим
+  просмотра: сервер отдаёт чужую очередь, но действия от имени админа
+  отклоняет. Поэтому «посмотреть» физически не может ничего изменить.
+
+  Адрес сервера не зашит: приходит параметром ?api= из кнопки бота и
+  передаётся дальше в открываемую страницу.
+-->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:   var(--tg-theme-bg-color, #ffffff);
+    --bg2:  var(--tg-theme-secondary-bg-color, #eef0f3);
+    --tx:   var(--tg-theme-text-color, #16191d);
+    --hint: var(--tg-theme-hint-color, #858b94);
+    --acc:  var(--tg-theme-button-color, #2b7de0);
+    --acc-tx: var(--tg-theme-button-text-color, #ffffff);
+    --sep:  rgba(128,128,128,.22);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  html,body{ margin:0; background:var(--bg2); color:var(--tx);
+    font:15px/1.4 -apple-system, "SF Pro Text", Roboto, "Segoe UI", system-ui, sans-serif; }
+  body{ max-width:640px; margin:0 auto;
+    padding:16px 12px calc(96px + env(safe-area-inset-bottom)); }
+  h1{ font-size:20px; margin:0 0 2px; }
+  .sub{ color:var(--hint); font-size:14px; margin:0 0 16px; }
+  .cap{ color:var(--hint); font-size:13px; margin:18px 4px 6px; }
+  .group{ background:var(--bg); border-radius:14px; overflow:hidden; }
+  .who{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    width:100%; text-align:left; background:none; border:0; padding:14px;
+    font:inherit; color:inherit; cursor:pointer; }
+  .who + .who{ border-top:1px solid var(--sep); }
+  .who b{ display:block; font-weight:600; }
+  .who span{ display:block; color:var(--hint); font-size:13px; margin-top:2px; }
+  .who i{ color:var(--hint); font-style:normal; }
+  .note{ background:var(--bg); border-radius:12px; padding:12px 14px; font-size:14px;
+    color:var(--hint); margin-top:14px; }
+  .err{ background:var(--bg); border-radius:12px; padding:14px; margin-bottom:14px;
+    color:var(--tg-theme-destructive-text-color, #d23f36); }
+  .submit{ position:fixed; left:0; right:0; bottom:0;
+    padding:12px 16px calc(20px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, var(--bg) 72%, transparent); }
+  .submit button{ width:100%; padding:16px; font:inherit; font-size:17px; font-weight:600;
+    background:var(--acc); color:var(--acc-tx); border:none; border-radius:12px; cursor:pointer; }
+</style>
+</head>
+<body>
+<h1>Админ</h1>
+<p class="sub" id="sub">Просмотр чужих экранов</p>
+<div id="err" class="err" hidden></div>
+
+<p class="cap">Решения</p>
+<div class="group">
+  <button class="who" type="button" data-page="status.html" data-as="Аманкали">
+    <span><b>Аманкали</b><span>Владелец: решения по развитию и сводка</span></span><i>→</i>
+  </button>
+  <button class="who" type="button" data-page="status.html" data-as="Алуа">
+    <span><b>Алуа</b><span>Согласующий: решения по текущей работе</span></span><i>→</i>
+  </button>
+</div>
+
+<p class="cap">Оплаты</p>
+<div class="group">
+  <button class="who" type="button" data-page="pay.html" data-as="Лаура">
+    <span><b>Лаура</b><span>Казначей: счета ИП и касса</span></span><i>→</i>
+  </button>
+  <button class="who" type="button" data-page="pay.html" data-as="Ерсайын">
+    <span><b>Ерсайын</b><span>Казначей: счета компании</span></span><i>→</i>
+  </button>
+</div>
+
+<div class="note">Открывается только просмотр: кнопки решений и оплаты на чужих
+страницах не показываются, а сервер отклонит их, даже если попытаться.</div>
+
+<div class="submit">
+  <button id="newReq" type="button">📝 Подать заявку</button>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if(tg){ try{ tg.ready(); tg.expand(); }catch(e){} }
+  if(tg && tg.colorScheme) document.documentElement.style.colorScheme = tg.colorScheme;
+
+  var API = new URLSearchParams(location.search).get('api') || '';
+  var API_OK = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(API);
+
+  if(!API_OK){
+    var e = document.getElementById('err');
+    e.hidden = false;
+    e.textContent = 'Кнопка устарела: нет адреса сервера. Отправьте боту /start и откройте «Админ» заново.';
+  }
+
+  // Открываем страницу той же вкладкой: Telegram держит Mini App в одном окне,
+  // назад человек возвращается системной стрелкой.
+  function open(page, as){
+    if(!API_OK) return;
+    location.href = page + '?api=' + encodeURIComponent(API) + '&as=' + encodeURIComponent(as);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.who'), function(b){
+    b.addEventListener('click', function(){ open(b.dataset.page, b.dataset.as); });
+  });
+  document.getElementById('newReq').addEventListener('click', function(){
+    if(!API_OK) return;
+    location.href = 'index.html?api=' + encodeURIComponent(API);
+  });
+})();
+</script>
+</body>
+</html>
