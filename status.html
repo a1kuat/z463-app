@@ -3,11 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Z-463 · Статус заявок</title>
+<title>ФИНЦЕНТР RW · Статус заявок</title>
 <meta name="z463-page" content="status">
 <!--
-  ФИНЦЕНТР Z-463 — страница согласующего. Репозиторий z463-app.
-  Версия 1.0 · 26.09.2026
+  ФИНЦЕНТР RW — страница согласующего. Репозиторий z463-app.
+  Версия 1.1 · 29.09.2026
+
+  v1.1: под списком решений — сводка владельца: деньги по всем счетам,
+  вчерашние оплаты, темп месяца, топ-10 поставщиков 1-го числа. Сервер
+  присылает её только Аманкали и только когда он смотрит своими глазами,
+  поэтому страница просто рисует то, что пришло, и ничего не решает сама.
 
   Показывает то, что ждёт решения ИМЕННО этого человека: своя линия,
   поднятое владельцу и заявки, по которым он сам задал вопрос. Правила
@@ -108,6 +113,14 @@
   .card h3{ margin:0 0 4px; font-size:17px; font-weight:600; }
   .card .meta{ color:var(--muted); font-size:13px; margin-bottom:2px; }
   .card .sum{ font-size:22px; font-weight:600; margin:6px 0 8px; }
+  /* Сводка владельца */
+  .card .cap{ color:var(--muted); font-size:13px; margin:12px 0 4px; }
+  .card .cap:first-of-type{ margin-top:8px; }
+  .bln{ display:flex; justify-content:space-between; gap:12px; padding:3px 0; font-size:14px; }
+  .bln span{ color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bln b{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bln.big b{ font-size:16px; }
+  .bln.bad b, .bln.bad span{ color:var(--danger, #e53935); }
   .row{ display:flex; gap:8px; margin-top:10px; }
   .row button{ flex:1; padding:11px 6px; font:inherit; font-size:15px; border:none;
     border-radius:10px; cursor:pointer; background:var(--bg); color:var(--fg); }
@@ -152,6 +165,7 @@
   <div id="err" class="msg hidden"></div>
   <div id="list"></div>
   <div class="empty hidden" id="empty">Ничего не ждёт вашего решения.</div>
+  <div id="brief"></div>
 </div>
 
 <div class="submit" id="bar">
@@ -215,6 +229,7 @@
       show($('viewNote'), S.view);
       if(S.view) $('viewNote').textContent='Вы смотрите глазами '+r.name+'. Только просмотр: нажимать за человека нельзя. Проверить действия — заявкой «ТЕСТ …».';
       draw(r.items);
+      drawBrief(r.brief);
     }).catch(function(e){
       stop('Сервер не отвечает.<small>'+String(e && e.message || e).slice(0,160)+'</small>');
     });
@@ -225,6 +240,60 @@
     if(cls) n.className=cls;
     if(text!=null) n.textContent=text;
     return n;
+  }
+
+  /**
+   * Сводка владельца — ПОД списком: сначала решения, потом цифры.
+   * Приходит только владельцу; всем остальным сервер шлёт null.
+   */
+  function bline(box, k, v, big, bad){
+    var l=el('div','bln'+(big?' big':'')+(bad?' bad':''));
+    l.appendChild(el('span','', k));
+    l.appendChild(el('b','', v==null?'':String(v)));
+    box.appendChild(l);
+  }
+  function drawBrief(b){
+    var host=$('brief'); host.innerHTML='';
+    if(!b) return;
+    var card=el('div','card');
+    card.appendChild(el('h3','','Сводка владельца'));
+
+    card.appendChild(el('div','cap','Деньги'));
+    if(b.bal && b.bal.ok){
+      b.bal.order.forEach(function(e){ bline(card, e, money(b.bal.byEnt[e])); });
+      bline(card, 'Всего на счетах', money(b.bal.total), true);
+      bline(card, 'Обязательства 7 дней', money(b.due7));
+      bline(card, 'Свободно', money(b.free), true, b.free<0);
+      if(b.cover!=null) bline(card, 'Покрытие', b.cover+'×', false, b.cover<2);
+      if(b.bal.miss) bline(card, 'Счетов без остатка', b.bal.miss, false, true);
+    } else {
+      bline(card, 'Остатки', 'недоступны', false, true);
+      bline(card, 'Обязательства 7 дней', money(b.due7));
+    }
+
+    card.appendChild(el('div','cap','Вчера оплачено'));
+    bline(card, 'Всего, '+b.yday.n+' шт.', money(b.yday.sum), true);
+    bline(card, 'Текущая, '+b.yday.run.n+' шт.', money(b.yday.run.sum));
+    bline(card, 'Развитие, '+b.yday.build.n+' шт.', money(b.yday.build.sum));
+
+    card.appendChild(el('div','cap','Темп месяца'));
+    bline(card, 'С 1-го числа', money(b.month.all), true);
+    bline(card, 'Текущая', money(b.month.run));
+    bline(card, 'Развитие', money(b.month.build));
+    if(b.month.firstDay) bline(card, 'Месяц только начался', '');
+    else if(b.month.delta==null) bline(card, 'Прошлый месяц', 'нет данных');
+    else bline(card, 'Прошлый месяц на эту дату',
+      money(b.month.prev)+'   '+(b.month.delta>=0?'+':'')+b.month.delta+'%');
+
+    if(b.top && b.top.length && b.topTotal){
+      card.appendChild(el('div','cap','Топ-10 поставщиков за прошлый месяц'));
+      b.top.forEach(function(x,i){
+        bline(card, (i+1)+'. '+x.sup, money(x.sum)+'   '+Math.round(x.sum/b.topTotal*100)+'%');
+      });
+      bline(card, 'Доля топ-10', b.topShare+'%', true);
+      bline(card, 'Поставщиков всего', b.supCount);
+    }
+    host.appendChild(card);
   }
 
   function draw(items){
