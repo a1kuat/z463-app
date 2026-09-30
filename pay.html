@@ -8,7 +8,15 @@
 <!--
   ФИНЦЕНТР Z-463 — экран казначея. Лежит в репозитории z463-app рядом с index.html.
 
-  Версия 1.4 · 29.09.2026
+  Версия 1.6 · 30.09.2026
+
+  v1.6: режим просмотра для ИТ-хранителя (?as=Имя): страница показывает
+  очередь чужими глазами и прячет все действия. Запрет держится на сервере,
+  страница лишь не рисует то, чего всё равно не дадут сделать.
+
+  v1.5: на заявке, ушедшей на счёт компании, есть возврат: у Ерсайына
+  «Передать Лауре», у Лауры «Вернуть себе». Ошибочная передача перестала
+  быть дорогой в одну сторону.
 
   v1.4: внизу кнопка «Подать заявку» — казначеям незачем уходить на другую
   страницу ради своих же расходов. Показывается только если сервер прислал
@@ -238,6 +246,7 @@
   var qs = new URLSearchParams(location.search);
   var API = qs.get('api') || '';
   var FOCUS = Number(qs.get('n')) || 0;
+  var AS = (qs.get('as') || '').slice(0, 60);   // чьими глазами смотрит админ
   // Шлём подпись только на сервер Apps Script. Любой другой адрес в ссылке —
   // повод остановиться, а не отправлять казначейскую подпись неизвестно куда.
   var API_OK = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(API);
@@ -387,7 +396,7 @@
         'Дальше открывается быстро.');
     }, 5000);
 
-    api('payInit', {n:FOCUS}).then(function(r){
+    api('payInit', {n:FOCUS, as:AS}).then(function(r){
       ждём = false;
       if(!r || !r.ok) return showState('Не получилось открыть очередь', (r && r.err) || 'Неизвестная ошибка', 'Повторить');
       D = r;
@@ -408,6 +417,7 @@
 
   function renderNotes(){
     var box = $('notes'); box.textContent = '';
+    if(D.readOnly) box.appendChild(el('div','note','Смотрите глазами: '+(D.viewAs||'—')+'. Действия отключены.'));
     if(D.backup) box.appendChild(el('div','note','Вы замещаете казначея. Лаура получит сообщение о каждой вашей отметке.'));
     if(D.payDay) box.appendChild(el('div','note','Сегодня платёжный день — удобно провести безнал разом.'));
     if(D.focus && !D.focus.inQueue)
@@ -520,6 +530,8 @@
     fact('Статья', it.art || (it.code ? it.code : 'без статьи — подтянется из поставщика, если там есть код'), (it.art||it.code) ? '' : 'miss');
     b.appendChild(f);
 
+    // В режиме просмотра карточка раскрывается, но кнопок нет.
+    if(D.readOnly) return b;
     if(refusing[it.num]) return refuseForm(b, it, dis);
 
     var cur = factSum(it), over = it.editable && cur > it.freeTo;
@@ -586,6 +598,20 @@
       h.textContent = 'Счёт другого юрлица: ' + sel.entity + '. В учёт платёж встанет на него.';
     } else if(sel && sel.entity){ h.textContent = 'В учёт: ' + sel.entity; }
     b.appendChild(h);
+
+    // Заявка уже у второго казначея: обеим сторонам нужен обратный ход.
+    if(it.too){
+      var back = el('button','go route', dis ? 'Возвращаю…' :
+        (D.role==='payer2' ? 'Вернуть в общую очередь' : 'Вернуть себе'));
+      back.type = 'button'; back.disabled = dis;
+      back.onclick = function(){ unroute(it); };
+      b.appendChild(back);
+      b.appendChild(el('p','hint', D.role==='payer2'
+        ? 'Платит ' + (D.payerName || 'Лаура') + ' — заявка вернётся в обычную очередь.'
+        : 'Заявка вернётся к вам, если счёт компании выбран по ошибке.'));
+      if(errOf[it.num]) b.appendChild(el('div','err', errOf[it.num]));
+      if(D.role!=='payer2') return b;
+    }
 
     if(route){
       var rgo = el('button','go route', dis ? 'Отправляю…' :
@@ -837,6 +863,16 @@
       api('raise', {num:it.num, sum:it.sum, factSum:cur, why:why}).then(function(r){
         if(r.stale) r.err += ' Нажмите «Обновить» вверху.';
         settle(it, r, {kind:'routed', note:'на согласование: ' + (r.to||'') + ', ' + money(cur)});
+      });
+    });
+  }
+
+  function unroute(it){
+    ask('№' + it.num + ' вернётся в обычную очередь оплат.\n\nВернуть?').then(function(ok){
+      if(!ok) return;
+      busy[it.num] = true; errOf[it.num] = ''; render();
+      api('unroute', {num:it.num}).then(function(r){
+        settle(it, r, {kind:'routed', note:'возвращено в очередь'});
       });
     });
   }
