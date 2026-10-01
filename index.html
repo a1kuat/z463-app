@@ -6,7 +6,13 @@
 <title>Заявка на оплату</title>
 <!--
   ФИНЦЕНТР TruckStop Z-463 — экран подачи заявки (Telegram Mini App)
-  Версия 1.6 · 23.09.2026 · репозиторий z463-app
+  Версия 1.7 · 01.10.2026 · репозиторий z463-app
+
+  v1.7: галочка «Регулярный платёж» и число месяца. Заявка подаётся как
+  обычная, а в расписание добавляется строка — дальше это число каждый
+  месяц приходит на оплату само, с меткой [РЕГ]. Число обязательно:
+  без него галочка ничего не значит, и лучше сказать об этом сразу,
+  чем молча подать разовую заявку вместо регулярной.
 
   v1.5: СЧЁТ ПРИКЛАДЫВАЕТСЯ ЗДЕСЬ ЖЕ. Раньше форма просила отправить фото
   боту отдельным сообщением после подачи — шаг, про который забывали, и
@@ -234,8 +240,22 @@
   </div>
 
   <div class="field">
+    <label class="check">
+      <input type="checkbox" id="regbox">
+      <span>Регулярный платёж
+        <small>Будет приходить на оплату каждый месяц</small></span>
+    </label>
+    <div class="hidden" id="regDayField" style="margin-top:10px">
+      <label for="regDay">Какого числа платить</label>
+      <input type="number" id="regDay" min="1" max="31" inputmode="numeric" placeholder="например, 25">
+      <div class="hint">Каждый месяц этого числа заявка создастся сама и уйдёт на оплату.
+        Остановить — в листе РЕГУЛЯРНЫЕ_ПЛАТЕЖИ.</div>
+    </div>
+  </div>
+
+  <div class="field">
     <label>Счёт или накладная</label>
-    <input type="file" id="pick" hidden>
+    <input type="file" id="pick" accept="image/*,application/pdf,.pdf" hidden>
     <button type="button" id="attach" class="attach">📎 Прикрепить файл или фото</button>
     <div id="files"></div>
     <div class="hint">Фото, скан или PDF — по одному, до трёх. Фото уменьшается перед отправкой.<br>
@@ -489,6 +509,7 @@
     $('attach').textContent = S.files.length ? '📎 Добавить ещё файл' : '📎 Прикрепить файл или фото';
     show($('attach'), S.files.length < MAX_FILES);
     show($('noDocField'), S.files.length === 0);
+
   }
 
   function shrink(file){
@@ -518,6 +539,11 @@
       r.readAsDataURL(file);
     });
   }
+
+  $('regbox').addEventListener('change', function(){
+    show($('regDayField'), $('regbox').checked);
+    if($('regbox').checked) $('regDay').focus();
+  });
 
   $('attach').addEventListener('click', function(){ $('pick').click(); });
   $('pick').addEventListener('change', function(){
@@ -567,6 +593,14 @@
       err('Приложите счёт или напишите, почему документа нет.');
       $('noDoc').focus(); return;
     }
+    // Галочка без числа — самая вероятная ошибка: человек думает, что
+    // настроил регулярный платёж, а настроил разовую заявку.
+    var regOn = $('regbox').checked;
+    var regDay = Math.round(Number($('regDay').value)||0);
+    if(regOn && (regDay<1 || regDay>31)){
+      err('Укажите число месяца от 1 до 31 для регулярного платежа.');
+      $('regDay').focus(); return;
+    }
 
     S.sending = true;
     $('send').disabled = true;
@@ -582,7 +616,9 @@
       paidFromCash: $('cashbox').checked,
       doc: $('doc').value.trim(),
       files: S.files.map(function(f){ return {name:f.name, mime:f.mime, data:f.data}; }),
-      noDoc: $('noDoc').value.trim()
+      noDoc: $('noDoc').value.trim(),
+      regular: regOn,
+      regularDay: regOn ? regDay : 0
     }).then(function(r){
       S.sending = false;
       if(!r || !r.ok){
@@ -594,7 +630,9 @@
       show($('form'),false);
       show($('submitBar'),false);
       $('doneNum').textContent = '№' + r.num;
-      $('doneText').textContent = S.isNew
+      $('doneText').textContent = regOn
+        ? 'Платёж поставлен на каждое ' + regDay + ' число. Ответы придут в чат с ботом.'
+        : S.isNew
         ? 'Новый поставщик добавлен — Лаура заполнит его профиль. Ответы придут в чат с ботом.'
         : 'Ответы по заявке придут в чат с ботом. Фото счёта можно отправить туда же.';
       show($('done'),true);
