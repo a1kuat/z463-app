@@ -7,7 +7,11 @@
 <meta name="z463-page" content="status">
 <!--
   ФИНЦЕНТР RW — страница согласующего. Репозиторий z463-app.
-  Версия 1.3 · 30.09.2026
+  Версия 1.4 · 01.10.2026
+
+  v1.4: выбор «Смотреть как» убран со страницы — он переехал на «Админ».
+  Сюда имя приходит параметром ?as=, и страница открывается сразу нужными
+  глазами. Два входа в одно и то же только путали.
 
   v1.3: принимает ?as=Имя со страницы «Админ» — открывается сразу глазами
   выбранного человека, в том же режиме «только просмотр».
@@ -162,10 +166,6 @@
   <h1 id="ttl">На вашем решении</h1>
   <div class="who" id="who"></div>
 
-  <div class="bar hidden" id="asBar">
-    <span style="color:var(--muted);font-size:14px">Смотреть как</span>
-    <select id="asSel"></select>
-  </div>
   <div class="view hidden" id="viewNote"></div>
 
   <div id="err" class="msg hidden"></div>
@@ -221,24 +221,13 @@
       S.view = !!r.view; S.reasons = r.reasons || [];
       show($('loading'),false); show($('app'),true); show($('bar'), !S.view);
       $('who').textContent = r.name + (r.items.length ? ' · ' + r.items.length + ' на ' + money(r.total) : '');
-      if(r.admin){
-        show($('asBar'),true);
-        var sel=$('asSel');
-        if(!sel.options.length){
-          sel.innerHTML='';
-          ['(я сам)'].concat(r.people).forEach(function(n){
-            var o=document.createElement('option'); o.value=(n==='(я сам)'?'':n); o.textContent=n; sel.appendChild(o);
-          });
-          sel.value = S.as;
-          sel.addEventListener('change', function(){ S.as = sel.value; draw([]); load(); });
-        }
-      }
       show($('viewNote'), S.view);
-      if(S.view) $('viewNote').textContent='Вы смотрите глазами '+r.name+'. Только просмотр: нажимать за человека нельзя. Проверить действия — заявкой «ТЕСТ …».';
+      if(S.view) $('viewNote').textContent='Смотрите глазами: '+r.name+'. Действия отключены.';
       draw(r.items);
       drawBrief(r.brief);
       // У владельца внизу сводка, у согласующего — кнопка подачи.
-      show($('bar'), !r.brief);
+      // В режиме просмотра подавать от чужого имени нельзя.
+      show($('bar'), !r.brief && !S.view);
     }).catch(function(e){
       stop('Сервер не отвечает.<small>'+String(e && e.message || e).slice(0,160)+'</small>');
     });
