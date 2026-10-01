@@ -6,7 +6,14 @@
 <title>Заявка на оплату</title>
 <!--
   ФИНЦЕНТР TruckStop Z-463 — экран подачи заявки (Telegram Mini App)
-  Версия 1.7 · 01.10.2026 · репозиторий z463-app
+  Версия 1.9 · 01.10.2026 · репозиторий z463-app
+
+  v1.8: число для регулярного платежа выбирается тапом по сетке 1–31,
+  а не набирается на клавиатуре. Под сеткой сразу видно, когда уйдёт
+  следующий платёж — иначе «25» остаётся абстракцией, и человек не
+  замечает, что выбрал вчерашнее число.
+  Для 29–31 поясняется, что в коротких месяцах платёж уйдёт в последний
+  день месяца (Код.gs 3.31 обрезает число до последнего дня).
 
   v1.7: галочка «Регулярный платёж» и число месяца. Заявка подаётся как
   обычная, а в расписание добавляется строка — дальше это число каждый
@@ -124,6 +131,15 @@
 
   .check{ display:flex; align-items:center; gap:12px; padding:13px 14px;
           background:var(--card); border-radius:12px; cursor:pointer; }
+  /* Сетка чисел: 31 кнопка в семь колонок — как в календаре,
+     поэтому «25» ищут глазами там же, где искали бы в календаре. */
+  #regDayField{ margin-top:12px; }
+  .days{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin:6px 0 8px; }
+  .days button{ padding:10px 0; font:inherit; font-size:15px; border:1px solid var(--line,#d8dce2);
+    border-radius:10px; background:var(--card,#fff); color:inherit; cursor:pointer;
+    font-variant-numeric:tabular-nums; }
+  .days button[aria-pressed="true"]{ background:var(--accent,#2b7de0); border-color:var(--accent,#2b7de0); color:#fff; font-weight:600; }
+  #regHint.warn{ color:var(--danger,#d64545); }
   .check input{ width:20px; height:20px; accent-color:var(--accent); margin:0; flex:none; }
   .check span{ font-size:15px; }
   .check small{ display:block; color:var(--muted); font-size:13px; }
@@ -245,11 +261,10 @@
       <span>Регулярный платёж
         <small>Будет приходить на оплату каждый месяц</small></span>
     </label>
-    <div class="hidden" id="regDayField" style="margin-top:10px">
-      <label for="regDay">Какого числа платить</label>
-      <input type="number" id="regDay" min="1" max="31" inputmode="numeric" placeholder="например, 25">
-      <div class="hint">Каждый месяц этого числа заявка создастся сама и уйдёт на оплату.
-        Остановить — в листе РЕГУЛЯРНЫЕ_ПЛАТЕЖИ.</div>
+    <div class="hidden" id="regDayField">
+      <label>Какого числа платить</label>
+      <div class="days" id="daysGrid"></div>
+      <div class="hint" id="regHint">Выберите число — платёж будет уходить каждый месяц.</div>
     </div>
   </div>
 
@@ -307,7 +322,8 @@
   if(tg){ tg.ready(); tg.expand(); }
 
   var S = { suppliers:[], sup:'', isNew:false, cash:'Безнал', line:'', n1:50000, sending:false,
-            ready:false };   // ready — пришёл ли init: до него подавать нечего
+            ready:false,     // ready — пришёл ли init: до него подавать нечего
+            regDay:0 };      // выбранное число для регулярного платежа
 
   function $(id){ return document.getElementById(id); }
   function show(el,on){ el.classList[on?'remove':'add']('hidden'); }
@@ -540,9 +556,49 @@
     });
   }
 
+  // Сетку строим один раз; выбор держим в S.regDay, а не в поле ввода.
+  (function(){
+    var g=$('daysGrid');
+    for(var d=1; d<=31; d++){
+      (function(day){
+        var b=document.createElement('button');
+        b.type='button'; b.textContent=day; b.setAttribute('aria-pressed','false');
+        b.addEventListener('click', function(){ pickDay(day); });
+        g.appendChild(b);
+      })(d);
+    }
+  })();
+  function nextDateText(day){
+    var now=new Date(), y=now.getFullYear(), m=now.getMonth();
+    if(now.getDate()>day) m++;                      // это число месяца уже прошло
+    var dt=new Date(y, m, day);
+    var mn=['января','февраля','марта','апреля','мая','июня','июля','августа',
+            'сентября','октября','ноября','декабря'][dt.getMonth()];
+    return dt.getDate()+' '+mn;
+  }
+  function pickDay(day){
+    S.regDay = day;
+    var kids=$('daysGrid').children;
+    for(var i=0;i<kids.length;i++) kids[i].setAttribute('aria-pressed', String(i+1===day));
+    var h=$('regHint');
+    if(day>=29){
+      h.className='hint';
+      h.textContent='Следующий платёж: '+nextDateText(day)+
+        '. В коротких месяцах — в последний день: 28 или 29 февраля, 30 апреля.';
+    } else {
+      h.className='hint';
+      h.textContent='Каждое '+day+' число. Следующий платёж: '+nextDateText(day)+'.';
+    }
+  }
   $('regbox').addEventListener('change', function(){
     show($('regDayField'), $('regbox').checked);
-    if($('regbox').checked) $('regDay').focus();
+    if(!$('regbox').checked){
+      S.regDay = 0;
+      var kids=$('daysGrid').children;
+      for(var i=0;i<kids.length;i++) kids[i].setAttribute('aria-pressed','false');
+      $('regHint').className='hint';
+      $('regHint').textContent='Выберите число — платёж будет уходить каждый месяц.';
+    }
   });
 
   $('attach').addEventListener('click', function(){ $('pick').click(); });
@@ -596,10 +652,10 @@
     // Галочка без числа — самая вероятная ошибка: человек думает, что
     // настроил регулярный платёж, а настроил разовую заявку.
     var regOn = $('regbox').checked;
-    var regDay = Math.round(Number($('regDay').value)||0);
+    var regDay = Number(S.regDay)||0;
     if(regOn && (regDay<1 || regDay>31)){
-      err('Укажите число месяца от 1 до 31 для регулярного платежа.');
-      $('regDay').focus(); return;
+      err('Выберите число месяца для регулярного платежа.');
+      $('regDayField').scrollIntoView({block:'center', behavior:'smooth'}); return;
     }
 
     S.sending = true;
