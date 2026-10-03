@@ -1,1900 +1,484 @@
-/************************************************************************
- * ФИНЦЕНТР RW — подача заявки через Telegram Mini App
- * Версия 3.8 · 02.10.2026
- *
- * v3.8: выбор линии в форме подачи показывается не только тем, у кого в
- * матрице стоит RUN+BUILD, но и согласующим: Алуа подаёт и текущие расходы,
- * и по развитию, а линия определяет статью и отчётность.
- * Решение по её собственным заявкам в любом случае принимает владелец —
- * это закрыто в approverFor_ (Код.gs 3.34), а не настройкой.
- *
- * v3.7: четвёртое действие согласующего — «Передать Аманкали», и смена
- * линии RUN/BUILD прямо на карточке.
- * Зачем: часть заявок по виду текущие, а по сути относятся к развитию,
- * и решать их должен владелец. Раньше Алуа могла только одобрить или
- * отклонить — третьего пути не было, и такие заявки одобрялись «на всякий
- * случай» либо висели.
- * Линия пишется в заявку до передачи, поэтому владелец видит её уже как
- * BUILD, а не угадывает. Передача ставит статус «На решении у Аманкали» —
- * дальше срабатывает обычный путь, включая его кнопки решения.
- *
- * v3.6: кнопка «Подать заявку» на странице оплат привязана к ИМЕНИ, а не к
- * вычисленной роли. Раньше она зависела от того, опознал ли сервер человека
- * как второго казначея; стоит имени в матрице разойтись с шаблоном — и
- * кнопка пропадала молча, без всякой ошибки.
- * Теперь список берётся из параметра ПОДАЧА_В_ОПЛАТАХ (имена через запятую),
- * а если он пуст — из имени второго казначея. У Лауры кнопки нет: её заявки
- * подают профильные сотрудники.
- * Проверка права на саму подачу (_canSubmit_) осталась прежней — список
- * решает только, показывать ли кнопку ЗДЕСЬ.
- *
- * v3.5: подача принимает галочку «Регулярный платёж» и число месяца:
- * data.regular = true, data.regularDay = 1..31. Заявка подаётся как
- * обычная, в текст добавляется метка «[РЕГ]», а в лист РЕГУЛЯРНЫЕ_ПЛАТЕЖИ
- * дописывается строка — дальше это число каждый месяц приходит само.
- * Форма на GitHub (index.html) должна прислать эти два поля; пока она их
- * не шлёт, поведение прежнее.
- *
- * v3.4: три правки по режиму админа.
- *   • Админ с ?as=Имя теперь разбирается РАНЬШЕ тестировщика. Азамат —
- *     и тот, и другой, и ветка тестировщика перехватывала его первой:
- *     вместо экрана Лауры он видел свои тестовые заявки.
- *   • Просмотр глазами Аманкали показывает его сводку: админ должен видеть
- *     ровно то же, что видит владелец, иначе смотреть незачем.
- *   • Выбор «смотреть как» внутри страницы статуса убран — выбор теперь
- *     один, на странице «Админ». Два входа в одно и то же только путали.
- *
- * v3.3: РЕЖИМ АДМИНА НА СТРАНИЦЕ ОПЛАТ. ИТ-хранитель открывает pay.html с
- * ?as=Имя и видит страницу казначея его глазами — но только смотрит.
- * Действия закрыты не на странице, а на сервере: mini_pay, route, unroute,
- * refuse и raise зовут _miniPayWho_ БЕЗ имени, а без имени у админа прав
- * нет. Так «посмотреть» не превращается в «случайно оплатил».
- *
- * v3.2: ВОЗВРАТ ОШИБОЧНОЙ ПЕРЕДАЧИ. Передача на счёт компании перестала
- * быть дорогой в одну сторону:
- *   • Лаура видит «Вернуть себе» на заявке, которую сама отправила
- *     (пока Ерсайын её не оплатил);
- *   • Ерсайын видит «Передать Лауре» на всём, что попало к нему по ошибке.
- * Обе кнопки зовут mini_unroute: статус возвращается в «Одобрена», счёт
- * списания очищается, второй казначей получает сообщение. Реестр не
- * трогаем — обязательство как было, так и остаётся.
- * Кнопка «Подать заявку» на странице оплат теперь только у Ерсайына:
- * у Лауры её убрали по просьбе владельца.
- *
- * v3.1: подавать заявки могут не только те, у кого в матрице роль
- * «Заявитель», но и казначеи, согласующий и владелец: у них роль в матрице
- * другая, а расходы бывают у всех. Кнопка «Подать заявку» добавлена на
- * страницу оплат — Ерсайыну и Лауре ходить за ней на другую страницу
- * незачем. Право проверяет сервер (_canSubmit_), кнопка лишь отражает ответ.
- * ВАЖНО про контроль: казначей теперь может подать заявку и сам же её
- * оплатить. Согласование между этими шагами остаётся, но чтобы собственные
- * расходы казначея не уходили на его же линию, впишите его в параметр
- * СОГЛАСУЕТ_ВЛАДЕЛЕЦ — тогда их решает владелец.
- *
- * v3.0: сводка владельца на странице статуса — под списком решений.
- * statusInit отдаёт блок brief ТОЛЬКО владельцу: деньги по всем счетам,
- * вчерашние оплаты, темп месяца, топ-10 поставщиков 1-го числа. Считает
- * ownerBrief_() из Код.gs — тот же источник, что и утреннее сообщение,
- * поэтому экран и чат всегда показывают одно и то же.
- * Остальным блок не отправляется вовсе: остатки по счетам и структура
- * расходов — владельческая информация, и рассылать её вместе с очередью
- * решений незачем. При «смотреть как» сводки нет: ИТ-хранитель смотрит
- * чужие заявки, а не чужие деньги. Требует Код.gs 3.22.
- *
- * v2.9 · 28.09.2026
- *
- * v2.9: пункт «👀 Показать кнопки меню у людей» — что сейчас в меню у
- * каждого подключённого. Кнопку чужого чата иначе не увидеть, и проверить
- * раскладку по ролям можно было только со слов людей.
- *
- * v2.8 · 28.09.2026
- *
- * v2.8: вопрос доступен со страницы статуса и со страницы оплат, адресат
- * выбирается из четырёх: заявитель, согласующий, владелец, оба казначея.
- * Вопрос заявителю ставит заявку на паузу (статус «Вопрос»), остальным —
- * просто сообщение: решение всё равно за тем, кто спросил.
- * Кнопки меню: казначеям «Оплаты», владельцу и Алуа «Статус», ИТ-хранителю
- * «Статус» со «Смотреть как». Подача — кнопкой внутри страницы.
- * Требует Код.gs 3.20.
- *
- * v2.7 · 26.09.2026
- *
- * v2.7: страница статуса для согласующего (status.html) — действия
- * statusInit/decide; вопрос казначея с выбором адресата (ask); «смотреть
- * как» для ИТ-хранителя (параметр ИТ_АДМИН) — только просмотр, действия
- * запрещены: нажатие за другого оставило бы в журнале чужое имя.
- * Кнопки меню расставляются по ролям функцией КНОПКИ_ПО_РОЛЯМ.
- * Требует Код.gs 3.19.
- *
- * v2.6 · 23.09.2026
- *
- * v2.6: отдельная страница приложения документа (doc.html) и действия
- * attachInit/attach для неё. Кто что вправе приложить, решает сервер:
- * платёжку — казначей по оплаченной заявке, счёт — автор. Со страницы
- * оплат приложение файла убрано: там выбор файла не срабатывал.
- * Требует Код.gs 3.18, doc.html 1.0, pay.html 1.3.
- *
- * v2.5: кнопка «приложить через чат» на экране оплаты. Выбор файла внутри
- * мини-приложения у части устройств возвращает пусто, и платёжку приложить
- * нечем. Кнопка присылает казначею сообщение с номером заявки — ответ на
- * него фотографией прикладывает документ обычным путём. Требует pay.html 1.3.
- *
- * v2.4: платёжку можно приложить прямо на экране оплаты — уходит заявителю
- * и ложится на Диск рядом со счётом. Требует Код.gs 3.15 и pay.html 1.2.
- *
- * v2.3: ФАЙЛ ПРИХОДИТ ВМЕСТЕ С ЗАЯВКОЙ. Страница присылает до трёх файлов
- * в base64; сервер отдаёт их Telegram (оттуда file_id для пересылок), кладёт
- * на Диск и отправляет тому, у кого заявка сейчас. Без файла заявка не
- * подаётся без объяснения причины. Требует Код.gs 3.14 и index.html 1.5.
- *
- * v2.2: СЧЁТ КОМПАНИИ — ЭТО СМЕНА ПЛАТЕЛЬЩИКА, А НЕ НОВОЕ РЕШЕНИЕ.
- * Раньше заявка по счёту ТОО, одобренная Алуа, шла на второй круг к
- * Аманкали и только потом к Ерсайыну. Решение по заявке принимается один
- * раз — Аманкали по «Развитию», Алуа по «Текущей работе». Теперь выбор
- * счёта компании просто переводит заявку Ерсайыну: платить с этих счетов
- * может только он. Заявки, уже висящие «На решении у Аманкали», доходят
- * по-старому — код их ветки сохранён.
- *
- * v2.1.1: страница оплат в тесте показывает вид той роли, чей шаг: кнопка из
- * сообщения «→ Ерсайын» открывает интерфейс Ерсайына (только счета ТОО, без
- * «передать»), из «→ Лаура» — интерфейс Лауры. В 2.1 вид был общий, и на
- * шаге Ерсайына страница предлагала передать заявку самому Ерсайыну.
- *
- * v2.1: ТЕСТОВЫЙ РЕЖИМ на странице оплат. Тестировщик видит в очереди
- * только свои тестовые заявки (и, если он казначей или владелец, свою
- * обычную очередь); проводит их по правилам той роли, чей это шаг.
- * Настоящие заявки тестовых не видят и наоборот. Требует Код.gs 3.10.
- *
- * v2.0: ДОКУМЕНТЫ. Разбор присланного фото переехал в Код.gs (_fileIn_):
- * тот же путь нужен и мастеру подачи, и казначею для платёжки, и держать
- * две копии логики — значит однажды получить расхождение. Здесь оставлена
- * тонкая обёртка с прежним именем, чтобы не сломать проверку и старые
- * вызовы. Оплата через Mini App теперь запоминает, кто и что оплатил: по
- * этому платёжка без ответа на сообщение находит свою заявку.
- * Требует Код.gs 3.9.
- *
- * v1.9: ЗАЩИТА ОТ ДУБЛЯ ПРИ ПОТЕРЕ ОТВЕТА. Бывает, что заявка создаётся,
- * а ответ до страницы не доходит (оборвалась мобильная сеть, Apps Script
- * ответил дольше таймаута). Человек видит «сервер не ответил», жмёт ещё
- * раз — и в таблице две одинаковые заявки.
- * Теперь повтор узнаётся по отпечатку: кто + поставщик + сумма + за что +
- * способ + срочность, привязанному к сессии Mini App (query_id из подписи).
- * Повтор в течение 30 минут не создаёт вторую заявку, а возвращает номер
- * первой — человек видит успех, как и должен был увидеть сразу.
- * Отпечаток пишется ДО создания заявки и подтверждается номером после:
- * если два нажатия придут одновременно, второе упрётся в замок и увидит
- * уже готовую запись. Две РАЗНЫЕ заявки подряд отпечаток не блокирует:
- * в нём есть и поставщик, и сумма, и текст.
- *
- * v1.8: doPost принимает ещё и апдейты Telegram — когда включён вебхук
- * (Код.gs v3.4). Их узнаём по секрету в адресе запроса, обработка целиком
- * в Код.gs. Ответ вебхуку — всегда 200 и коротким текстом: на любой другой
- * ответ Telegram присылает апдейт повторно.
- *
- * v1.7: ПОТОЛОК СУММЫ БОЛЬШЕ НЕ ТУПИК. Счёт выше MINI_EDIT_MAX_UP — казначей
- * отправляет заявку согласующему линии с фактической суммой; тот жмёт
- * «Одобрить», и заявка возвращается в очередь оплат уже с ней. Пока решения
- * нет, заявка не считается одобренной: строка обязательства из реестра
- * снимается, статус — «Подана». Так превышение проходит через того, кто и
- * должен такие суммы утверждать, а не через казначея.
- *
- * v1.6: ДВА КАЗНАЧЕЯ. Лаура платит со счетов ИП, Ерсайын — со счетов ТОО.
- * На экране Лауры счета ТОО видны, но кнопка на них меняется:
- *   • владелец заявку уже одобрял (BUILD или поднятая к нему) →
- *     «Передать Ерсайыну»: маршрут, второго согласования нет;
- *   • не одобрял (обычный RUN) → «Отправить Аманкали»: его одобрение
- *     сразу ставит заявку в очередь Ерсайына, мимо Лауры.
- * Ерсайын видит только свою очередь и только счета ТОО. Проверки — на
- * сервере: роль, статус заявки и принадлежность счёта компании.
- *
- * v1.5: УТОЧНЕНИЕ СУММЫ КАЗНАЧЕЕМ — для регулярных платежей ([РЕГ]), где
- * сумма в заявке предварительная: по счёту за свет или связь точную цифру
- * видно только в самом счёте. Казначей вводит фактическую сумму, и в учёт
- * идёт она.
- *
- * ПОЧЕМУ НЕ ДЛЯ ВСЕХ ЗАЯВОК. Одобренная сумма — это решение согласующего.
- * Если её можно переписать на экране оплаты, согласование перестаёт что-либо
- * значить. Поэтому правка включена только там, где сумма и не была решением:
- * у регулярных. Разрешить везде — MINI_EDIT_ALL = true, но тогда контроль
- * суммы держится только на журнале.
- *
- * КОРИДОР (считается на сервере, страница на него не влияет):
- *   • меньше одобренного — всегда можно: платим по факту счёта;
- *   • превышение в пределах MINI_EDIT_FREE_PCT — казначей проводит сам;
- *   • сверх того и до MINI_EDIT_MAX_UP — нужна причина, а согласующий и
- *     владелец получают сообщение: деньги ушли больше, чем одобряли;
- *   • выше MINI_EDIT_MAX_UP — оплата не проходит: сумму поднимает
- *     согласующий в таблице. Это не платёж по счёту, а новое решение.
- * Исходная оценка остаётся в колонке «Сумма», факт пишется в «Одобрено» —
- * в реестр и ФИНУЧЁТ уходит факт, а расхождение видно в таблице.
- *
- * v1.4: ИСТОРИЯ ОПЛАТ на странице казначея — вкладка «Оплачено» за 7 дней,
- * по дням, с итогом по каждому счёту. Зачем: вечером сверить с приложением
- * банка «сколько ушло с Kaspi сегодня», и перед переводом проверить, не
- * отмечала ли эту оплату уже. Полная история — в таблице и ФИНУЧЁТЕ,
- * здесь только оперативное окно. Отмены оплаты со страницы нет намеренно:
- * исправление денег — в таблице, где его видит журнал аудита.
- *
- * v1.3: ОПЛАТА КАЗНАЧЕЕМ. Вторая страница — pay.html в том же репозитории.
- * Открывается кнопкой «💳 Провести оплату» под сообщением «К оплате» или
- * командой /оплаты. Казначей выбирает счёт списания и дату → mini_pay →
- * тот же markPaid_, что срабатывает от галочки в таблице. Отказ в оплате —
- * mini_refuse → тот же setStatusByNum_, что у кнопок согласования.
- * Своей учётной логики здесь нет намеренно: два пути к одной записи
- * рано или поздно начинают писать по-разному.
- *
- * ЗАЩИТА ОПЛАТЫ — что проверяется на сервере, а не на странице:
- *   • подпись Telegram (как у подачи) + свежесть не старше 4 часов;
- *   • человек по подписи — казначей (или владелец, см. MINI_PAY_OWNER_BACKUP);
- *   • заявка всё ещё одобрена и не оплачена — проверка ПОД ЗАМКОМ, двойное
- *     нажатие или два телефона не проведут платёж дважды;
- *   • сумма на экране совпадает с суммой в таблице — если согласующий успел
- *     поменять одобренную сумму, оплата не пройдёт, пока список не обновят;
- *   • счёт — только из листа СЧЕТА, дата — не в будущем и не старше 31 дня.
- * Скрипт работает от имени владельца, поэтому журнал аудита сам по себе
- * записал бы «система». Кто нажал — берём из подписи и пишем явно.
- *
- * ЭТО ОТДЕЛЬНЫЙ ФАЙЛ. Код.gs не заменяет и не трогает: у файлов Apps Script
- * общее пространство имён, поэтому createRequest_, _supList_, getEmployees_,
- * tgApi_ и прочее доступны отсюда напрямую. Если Mini App не приживётся —
- * удалите этот файл целиком, и система вернётся к состоянию v2.5.
- *
- * ГДЕ ЧТО ЛЕЖИТ
- *   Страница  → GitHub Pages (репозиторий z463-app, файл index.html)
- *   Логика    → здесь, в Apps Script
- *   Данные    → таблица ФИНЦЕНТР
- *
- * ПОЧЕМУ СТРАНИЦА НЕ ЗДЕСЬ. v1.0 отдавала HTML через HtmlService — не
- * заработало. Apps Script показывает страницу во вложенном фрейме на
- * googleusercontent, а Telegram передаёт подписанные данные в хеш-части
- * адреса, которая до вложенного фрейма не доходит. initData всегда пустой,
- * ошибок при этом никаких. Настройками не лечится, проверено 08.09.
- *
- * ⚠️ ВЕБХУК ПО-ПРЕЖНЕМУ ВКЛЮЧАТЬ НЕЛЬЗЯ.
- * Здесь есть doPost — но это точка приёма ОТ НАШЕЙ СТРАНИЦЫ, а не вебхук
- * Telegram. Telegram по редиректам не ходит и на 302 от Apps Script
- * ломается, поэтому апдейты по-прежнему забирает опрос. Вызов setWebhook
- * заблокирует опрос через 409 и остановит все кнопки согласования.
- *
- * ПОЧЕМУ text/plain, А НЕ application/json. Страница и сервер на разных
- * доменах. JSON в заголовке заставляет браузер сначала отправить
- * предварительный запрос OPTIONS, на который веб-приложения Apps Script не
- * отвечают — отправка молча падает. text/plain такого запроса не требует.
- * Тело всё равно разбираем как JSON.
- *
- * РАЗВЁРТЫВАНИЕ
- *   Развернуть → Управление развёртываниями → Изменить (карандаш) →
- *   Версия: Новая → Развернуть.
- *   Доступ: у всех, включая анонимных. Выполнять от имени: Я.
- *
- * ПОСЛЕ КАЖДОЙ ПРАВКИ КОДА — новая версия развёртывания. Иначе страница
- * продолжит обращаться к старой. Самая частая причина «поправил, но ничего
- * не изменилось».
- *
- * v1.2: АДРЕС РАЗВЁРТЫВАНИЯ БОЛЬШЕ НЕ ЗАШИТ В index.html НА GITHUB.
- * Он хранится в ПАРАМЕТРЫ → WEBAPP_URL и передаётся странице параметром
- * ?api= в адресе кнопки бота. Причина: адрес живёт здесь, а файл — на
- * GitHub; создание нового развёртывания расходило эти два места, страница
- * стучалась по мёртвому адресу, браузер отдавал «Load failed», и починить
- * это мог только человек с доступом к репозиторию.
- * Теперь смена развёртывания = запуск НАСТРОИТЬ_MINIAPP. GitHub не трогаем.
- * ПРОВЕРКА_MINIAPP теперь дёргает адрес анонимно — ровно так, как это делает
- * телефон, — и ловит мёртвое или закрытое развёртывание до того, как о нём
- * сообщит команда.
- ************************************************************************/
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ФИНЦЕНТР RW · Статус заявок</title>
+<meta name="z463-page" content="status">
+<!--
+  ФИНЦЕНТР RW — страница согласующего. Репозиторий z463-app.
+  Версия 1.5 · 02.10.2026
 
-var MINI_TTL = 86400;   // подпись initData считаем свежей сутки
+  v1.5: на карточке можно переключить линию RUN/BUILD и передать заявку
+  владельцу четвёртой кнопкой. Перевод в «Развитие» — это и есть передача:
+  BUILD решает владелец, и заявка сразу уходит к нему. Кнопка «Передать
+  Аманкали» нужна для другого случая: линия остаётся текущей, а решение
+  всё равно за ним.
 
-// Для денег окно короче: открытая и забытая страница не должна проводить
-// оплаты завтра. Истекла — закрыть и открыть кнопкой заново, это секунда.
-var MINI_PAY_TTL = 4*3600;
-// Владелец может провести оплату, когда казначея нет (решение первой фазы:
-// основатели подменяют друг друга). false — оплаты только у казначея.
-var MINI_PAY_OWNER_BACKUP = true;
-// Насколько назад можно поставить дату оплаты.
-var MINI_PAY_MAX_BACK = 31;
-// Сколько дней показывать во вкладке «Оплачено».
-var MINI_PAY_HISTORY_DAYS = 7;
-// --- Уточнение суммы (см. шапку) ---
-var MINI_EDIT_ALL = false;       // true — правка суммы у любых заявок, не только регулярных
-var MINI_EDIT_FREE_PCT = 20;     // превышение в этих % проводится без объяснений
-var MINI_EDIT_FREE_MIN = 5000;   // ...но не меньше этой суммы: у мелких счетов % слишком узок
-var MINI_EDIT_MAX_UP = 300000;   // потолок превышения; выше — только через согласующего
+  Версия 1.4 · 01.10.2026
 
-// ===================== ТОЧКИ ВХОДА =====================
-/**
- * Приём запросов от страницы. Одна точка на все действия — так проще
- * держать проверку подписи в одном месте.
- */
-function doPost(e){
-  var out = {ok:false, err:'Пустой запрос'};
-  try{
-    if(typeof _execReset_==='function') _execReset_();   // чистые кэши на каждый запрос
-    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    // v1.8: сюда же приходят апдейты Telegram, если включён вебхук.
-    // Отличаем по секрету в адресе (?tg=…), а не по виду тела запроса.
-    if(e && e.parameter && e.parameter.tg){
-      // v2.5: ok / dup / no → прокси закрывает апдейт; busy → Telegram повторит.
-      var hr = (typeof handleWebhook_==='function') ? handleWebhook_(e, body) : 'no';
-      if(hr===true) hr='ok'; else if(hr===false || !hr) hr='no';
-      return ContentService.createTextOutput(String(hr))
-        .setMimeType(ContentService.MimeType.TEXT);
-    }
-    var initData = String(body.initData||'');
-    // Действие над тестовой заявкой — все её сообщения уйдут автору.
-    var bnum = Number((body.data||{}).num)||0;
-    if(bnum && typeof isTestNum_==='function' && isTestNum_(bnum)) _testOn_(bnum);
-    if(body.action==='statusInit')    out = mini_statusInit(initData, body.data||{});
-    else if(body.action==='decide')   out = mini_decide(initData, body.data||{});
-    else if(body.action==='ask')      out = mini_ask(initData, body.data||{});
-    else if(body.action==='attachInit') out = mini_attachInit(initData, body.data||{});
-    else if(body.action==='attach')   out = mini_attach(initData, body.data||{});
-    else if(body.action==='init')     out = mini_init(initData);
-    else if(body.action==='submit')   out = mini_submit(initData, body.data||{});
-    else if(body.action==='payInit')  out = mini_payInit(initData, body.data||{});
-    else if(body.action==='pay')      out = mini_pay(initData, body.data||{});
-    else if(body.action==='refuse')   out = mini_refuse(initData, body.data||{});
-    else if(body.action==='route')    out = mini_route(initData, body.data||{});
-    else if(body.action==='unroute')  out = mini_unroute(initData, body.data||{});
-    else if(body.action==='raise')    out = mini_raise(initData, body.data||{});
-    else if(body.action==='docAsk')   out = mini_docAsk(initData, body.data||{});
-    else out = {ok:false, err:'Неизвестное действие: '+String(body.action)};
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА','','MiniApp doPost упал','',txt);
-    out = {ok:false, err:'Сбой на сервере: '+txt.slice(0,180)};
+  v1.4: выбор «Смотреть как» убран со страницы — он переехал на «Админ».
+  Сюда имя приходит параметром ?as=, и страница открывается сразу нужными
+  глазами. Два входа в одно и то же только путали.
+
+  v1.3: принимает ?as=Имя со страницы «Админ» — открывается сразу глазами
+  выбранного человека, в том же режиме «только просмотр».
+
+  v1.2: кнопка «Подать заявку» — только согласующему. У владельца внизу
+  сводка, и вторая кнопка там лишняя.
+
+  v1.1: под списком решений — сводка владельца: деньги по всем счетам,
+  вчерашние оплаты, темп месяца, топ-10 поставщиков 1-го числа. Сервер
+  присылает её только Аманкали и только когда он смотрит своими глазами,
+  поэтому страница просто рисует то, что пришло, и ничего не решает сама.
+
+  Показывает то, что ждёт решения ИМЕННО этого человека: своя линия,
+  поднятое владельцу и заявки, по которым он сам задал вопрос. Правила
+  отбора — те же, что у команды /ожидание, считает их сервер.
+
+  Три действия на заявку: одобрить, отклонить с причиной, задать вопрос.
+  Право на каждое проверяет сервер заново — страница ничего не решает.
+
+  «Смотреть как» — для ИТ-хранителя (параметр ИТ_АДМИН). Он открывает
+  страницу глазами любого человека, но только смотрит: нажать за другого
+  нельзя, иначе в журнале осталось бы чужое имя. Проверять действия —
+  тестовой заявкой «ТЕСТ …», там он играет все роли по своей заявке.
+-->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:      var(--tg-theme-bg-color, #ffffff);
+    --fg:      var(--tg-theme-text-color, #000000);
+    --muted:   var(--tg-theme-hint-color, #8b8b8b);
+    --card:    var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --accent:  var(--tg-theme-button-color, #2481cc);
+    --onAccent:var(--tg-theme-button-text-color, #ffffff);
+    --danger:  #d64545;
+    --line:    rgba(128,128,128,.22);
   }
-  return ContentService.createTextOutput(JSON.stringify(out))
-    .setMimeType(ContentService.MimeType.JSON);
-}
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg); }
+  body{
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 12px 16px 120px;
+  }
+  h1{ font-size:20px; font-weight:600; margin:4px 0 2px; }
+  .who{ color:var(--muted); font-size:14px; margin-bottom:20px; }
 
-/** Открытый в браузере адрес развёртывания. Страница подачи живёт не здесь. */
-function doGet(e){
-  return ContentService.createTextOutput(
-    'ФИНЦЕНТР RW — служебный адрес. Форма подачи открывается кнопкой «Заявка» в чате с ботом.'
-  ).setMimeType(ContentService.MimeType.TEXT);
-}
+  label{ display:block; font-size:14px; color:var(--muted); margin:0 0 6px; }
+  .field{ margin-bottom:20px; }
 
-// ===================== ПРОВЕРКА ПОДПИСИ =====================
-/**
- * Проверка initData по алгоритму Telegram.
- *   secret = HMAC_SHA256(токен_бота, ключ "WebAppData")
- *   hash   = HMAC_SHA256(строка_проверки, secret)
- * Строка проверки — все пары кроме hash, декодированные, отсортированные
- * по имени и склеенные через перевод строки.
- *
- * Без этой проверки любой, кто узнает адрес развёртывания, создавал бы
- * заявки от чужого имени: адрес открыт всем, иначе Telegram не пустит.
- * @param {string} initData
- * @param {number=} ttl  срок свежести подписи в секундах; по умолчанию MINI_TTL
- * @return {{ok:boolean, chat:string, err:string}}
- */
-function _tgVerify_(initData, ttl){
-  var tok = props().getProperty('TG_TOKEN');
-  if(!tok) return {ok:false, err:'Токен бота не задан в свойствах скрипта'};
-  var raw = String(initData||'');
-  if(!raw) return {ok:false, err:'Страница открыта не из Telegram'};
+  input[type=text], input[type=tel], textarea{
+    width:100%; font:inherit; color:var(--fg); background:var(--card);
+    border:1px solid transparent; border-radius:12px; padding:13px 14px;
+    appearance:none;
+  }
+  input:focus, textarea:focus{ outline:none; border-color:var(--accent); }
+  textarea{ resize:none; min-height:76px; }
 
-  var hash='', pairs=[], userJson='', authDate=0;
-  raw.split('&').forEach(function(p){
-    var i = p.indexOf('=');
-    if(i<0) return;
-    var k = p.slice(0,i), v = p.slice(i+1);
-    if(k==='hash'){ hash = v; return; }
-    var dec = decodeURIComponent(v);
-    if(k==='user') userJson = dec;
-    if(k==='auth_date') authDate = Number(dec)||0;
-    pairs.push(k+'='+dec);
-  });
-  if(!hash) return {ok:false, err:'Нет подписи'};
+  /* Сумма — единственный крупный элемент. Её проверяют и заявитель,
+     и согласующий, поэтому она должна читаться с вытянутой руки. */
+  #sum{ font-size:30px; font-weight:600; letter-spacing:-0.5px; padding:14px; }
+  .sumRow{ display:flex; align-items:baseline; gap:10px; }
+  .sumRow .cur{ font-size:20px; color:var(--muted); }
 
-  pairs.sort();
-  var secret = Utilities.computeHmacSha256Signature(tok, 'WebAppData');
-  var sig = Utilities.computeHmacSha256Signature(
-    Utilities.newBlob(pairs.join('\n')).getBytes(), secret);
-  var hex = sig.map(function(b){ return ('0'+(b & 0xFF).toString(16)).slice(-2); }).join('');
-  if(hex !== hash){
-    audit_('СИСТЕМА','','MiniApp: подпись не совпала','','');
-    return {ok:false, err:'Подпись не совпала. Закройте окно и откройте заявку кнопкой в чате.'};
+  .opts{ display:flex; gap:10px; }
+  .opt{
+    flex:1; text-align:center; padding:13px 8px; border-radius:12px;
+    background:var(--card); border:1.5px solid transparent; cursor:pointer;
+    font-size:15px; user-select:none;
+  }
+  .opt[aria-pressed="true"]{ border-color:var(--accent); color:var(--accent); font-weight:600; }
+
+  .check{ display:flex; align-items:center; gap:12px; padding:13px 14px;
+          background:var(--card); border-radius:12px; cursor:pointer; }
+  .check input{ width:20px; height:20px; accent-color:var(--accent); margin:0; flex:none; }
+  .check span{ font-size:15px; }
+  .check small{ display:block; color:var(--muted); font-size:13px; }
+
+  .found{ margin-top:8px; border-radius:12px; overflow:hidden; background:var(--card); }
+  .found div{ padding:12px 14px; border-bottom:1px solid var(--line); cursor:pointer; font-size:15px; }
+  .found div:last-child{ border-bottom:none; }
+  .picked{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+           background:var(--card); border-radius:12px; padding:13px 14px; }
+  .picked b{ font-weight:600; }
+  .picked button{ background:none; border:none; color:var(--accent); font:inherit;
+                  padding:0; cursor:pointer; flex:none; }
+
+  .submit{
+    position:fixed; left:0; right:0; bottom:0; padding:12px 16px 20px;
+    background:linear-gradient(to top, var(--bg) 72%, transparent);
+  }
+  .submit button{
+    width:100%; padding:16px; font:inherit; font-size:17px; font-weight:600;
+    background:var(--accent); color:var(--onAccent); border:none; border-radius:12px;
+    cursor:pointer;
+  }
+  .submit button[disabled]{ opacity:.45; }
+
+  .msg{ padding:14px; border-radius:12px; font-size:15px; margin-bottom:18px;
+        background:rgba(214,69,69,.13); color:var(--danger); }
+  .msg small{ display:block; margin-top:8px; color:var(--muted); font-size:13px; }
+  .hint{ color:var(--muted); font-size:13px; margin-top:6px; }
+  .attach{ width:100%; padding:14px; border-radius:12px; font-size:16px; cursor:pointer;
+    border:1px dashed var(--hint,#8a8a8e); background:transparent; color:var(--link,#2481cc); }
+  .attach:active{ opacity:.7; }
+  .fileRow{ display:flex; align-items:center; gap:8px; margin-top:8px; font-size:14px; }
+  .fileRow span{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fileRow button{ border:0; background:transparent; color:var(--destr,#e53935); font-size:15px; cursor:pointer; }
+
+  .card{ background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .card h3{ margin:0 0 4px; font-size:17px; font-weight:600; }
+  .card .meta{ color:var(--muted); font-size:13px; margin-bottom:2px; }
+  .card .sum{ font-size:22px; font-weight:600; margin:6px 0 8px; }
+  /* Сводка владельца */
+  .card .cap{ color:var(--muted); font-size:13px; margin:12px 0 4px; }
+  .card .cap:first-of-type{ margin-top:8px; }
+  .bln{ display:flex; justify-content:space-between; gap:12px; padding:3px 0; font-size:14px; }
+  .bln span{ color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bln b{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bln.big b{ font-size:16px; }
+  .bln.bad b, .bln.bad span{ color:var(--danger, #e53935); }
+  /* Переключатель линии: две кнопки, выбранная залита. */
+  .lineSw{ display:inline-flex; gap:6px; margin-top:10px; }
+  .lineSw button{ padding:7px 14px; font:inherit; font-size:14px; border:1px solid var(--line,#d8dce2);
+    border-radius:999px; background:var(--card,#fff); color:inherit; cursor:pointer; }
+  .lineSw button[aria-pressed="true"]{ background:var(--accent,#2b7de0); border-color:var(--accent,#2b7de0);
+    color:#fff; font-weight:600; }
+  .row.second{ margin-top:8px; }
+  .row .up{ background:var(--bg,#eef1f5); }
+  .row{ display:flex; gap:8px; margin-top:10px; }
+  .row button{ flex:1; padding:11px 6px; font:inherit; font-size:15px; border:none;
+    border-radius:10px; cursor:pointer; background:var(--bg); color:var(--fg); }
+  .row .ok{ background:var(--accent); color:var(--onAccent); font-weight:600; }
+  .row .no{ color:var(--danger); }
+  .tag{ display:inline-block; font-size:12px; padding:2px 8px; border-radius:99px;
+    background:var(--bg); color:var(--muted); margin-right:6px; }
+  .tag.urg{ color:var(--danger); }
+  .bar{ display:flex; gap:8px; align-items:center; margin-bottom:14px; }
+  .bar select{ flex:1; font:inherit; padding:10px; border-radius:10px;
+    background:var(--card); color:var(--fg); border:1px solid transparent; }
+  .view{ background:rgba(214,69,69,.13); color:var(--danger); padding:10px 12px;
+    border-radius:10px; font-size:14px; margin-bottom:14px; }
+  .ask{ margin-top:10px; }
+  .ask select, .ask textarea{ width:100%; font:inherit; margin-top:8px; padding:11px;
+    border-radius:10px; background:var(--bg); color:var(--fg); border:1px solid transparent; }
+  .empty{ text-align:center; color:var(--muted); padding:50px 20px; }
+  .hidden{ display:none !important; }
+
+  .done{ text-align:center; padding:56px 20px; }
+  .done .num{ font-size:40px; font-weight:600; margin:14px 0 6px; }
+  .done p{ color:var(--muted); margin:0 0 26px; }
+  .done button{ font:inherit; font-size:16px; padding:14px 30px; border:none;
+                border-radius:12px; background:var(--card); color:var(--fg); cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="loading" class="who">Загружаю…</div>
+<div id="blocked" class="hidden"><div class="msg" id="blockedText"></div></div>
+
+<div id="app" class="hidden">
+  <h1 id="ttl">На вашем решении</h1>
+  <div class="who" id="who"></div>
+
+  <div class="view hidden" id="viewNote"></div>
+
+  <div id="err" class="msg hidden"></div>
+  <div id="list"></div>
+  <div class="empty hidden" id="empty">Ничего не ждёт вашего решения.</div>
+  <div id="brief"></div>
+</div>
+
+<div class="submit" id="bar">
+  <button id="newReq">📝 Подать заявку</button>
+</div>
+
+<script>
+(function(){
+  var Q = new URLSearchParams(location.search);
+  var API_URL = (function(){
+    var q = Q.get('api') || '';
+    return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(q) ? q : '';
+  })();
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var initData = tg ? (tg.initData || '') : '';
+  if(tg){ tg.ready(); tg.expand(); }
+
+  // ?as=Имя приходит со страницы «Админ»: открываем сразу нужные глаза.
+  var S = { as:(Q.get('as')||'').slice(0,60), view:false, reasons:[], busy:{} };
+  function $(id){ return document.getElementById(id); }
+  function show(el,on){ el.classList[on?'remove':'add']('hidden'); }
+  function money(n){ return Number(n||0).toLocaleString('ru-RU').replace(/,/g,' ')+' ₸'; }
+  function stop(html){
+    show($('loading'),false); show($('app'),false); show($('bar'),false);
+    $('blockedText').innerHTML = html; show($('blocked'),true);
+  }
+  function err(t){ var e=$('err'); if(!t){ show(e,false); return; } e.textContent=t; show(e,true); }
+
+  function api(action, data){
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var t = ctl ? setTimeout(function(){ try{ ctl.abort(); }catch(e){} }, 30000) : null;
+    return fetch(API_URL, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({action:action, initData:initData, data:data||{}}),
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(r){ return r.text(); })
+      .then(function(x){ if(t) clearTimeout(t); return JSON.parse(x); },
+            function(e){ if(t) clearTimeout(t); throw e; });
   }
 
-  // Старую подпись не принимаем: перехваченную ссылку нельзя использовать вечно.
-  // auth_date обязателен: без него проверку свежести можно было бы обойти.
-  if(!authDate || (Date.now()/1000 - authDate) > (ttl||MINI_TTL))
-    return {ok:false, err:'Окно открыто слишком давно. Закройте и откройте заново.'};
+  if(!initData){ stop('Эта страница открывается только из Telegram — кнопкой «Статус» в чате с ботом.'); return; }
+  if(!API_URL){ stop('Кнопка настроена не до конца.<small>Азамату: «⚙️ ФИНЦЕНТР → Настроить Mini App».</small>'); return; }
 
-  var u = {};
-  try{ u = JSON.parse(userJson||'{}'); }catch(err){}
-  if(!u.id) return {ok:false, err:'Telegram не передал пользователя'};
-
-  // query_id — идентификатор ОТКРЫТИЯ Mini App. Одинаков для всех запросов
-  // одной сессии, поэтому годится как якорь для защиты от повторной подачи.
-  var qid = '';
-  raw.split('&').forEach(function(pp){
-    if(pp.indexOf('query_id=')===0) qid = decodeURIComponent(pp.slice(9));
-  });
-  return {ok:true, chat:String(u.id), qid:qid};
-}
-
-/**
- * Право подавать заявку. Роль «Заявитель» в матрице — основной признак,
- * но у казначеев, согласующего и владельца в роли написано другое, а
- * расходы у них тоже бывают. Их опознаём по chat_id, а не по тексту роли:
- * формулировки в матрице меняются, а привязка к роли в системе — нет.
- */
-/**
- * Кому показывать «Подать заявку» на странице оплат.
- * Параметр ПОДАЧА_В_ОПЛАТАХ — имена через запятую; пусто — только второй
- * казначей. Сравниваем по имени из матрицы, без учёта регистра и пробелов.
- */
-function _paySubmitAllowed_(me, chat){
-  if(!_canSubmit_(me, chat)) return false;
-  var norm=function(x){ return String(x||'').replace(/\u00A0/g,' ').replace(/\s+/g,' ').trim().toLowerCase(); };
-  var raw=String(prm('ПОДАЧА_В_ОПЛАТАХ','')||'').trim();
-  var list = raw ? raw.split(/[,;\n]+/).map(norm).filter(String)
-                 : [norm((payer2Chat_()||{}).name)].filter(String);
-  if(!list.length) return false;
-  return list.indexOf(norm(me && me.name))>-1;
-}
-
-function _canSubmit_(me, chat){
-  if(/заявител/i.test(String(me && me.role || ''))) return true;
-  chat = String(chat||'');
-  return ['laura','yersayin','amankali','alua'].some(function(k){
-    var e = roleChat_(k);
-    return !!(e && e.chat && String(e.chat)===chat);
-  });
-}
-
-/** Сотрудник по chat_id из подписи. Единая точка опознания. */
-function _miniWho_(initData){
-  var v = _tgVerify_(initData);
-  if(!v.ok) return {ok:false, err:v.err};
-  _empReset_();
-  var me = getEmployees_().filter(function(x){ return x.chat===v.chat; })[0];
-  if(!me) return {ok:false, err:'Вас нет в системе. Отправьте боту /start и выберите себя из списка.'};
-  if(!_canSubmit_(me, v.chat))
-    return {ok:false, err:'У вас нет права подавать заявки. Если это ошибка — обратитесь к Азамату.'};
-  // qid прокидываем дальше: на нём держится защита от повторной подачи.
-  return {ok:true, me:me, chat:v.chat, qid:v.qid||''};
-}
-
-// ===================== ДАННЫЕ ДЛЯ СТРАНИЦЫ =====================
-/**
- * Стартовые данные. Справочник поставщиков кэшируем на 10 минут: он читается
- * при каждом открытии, а меняется раз в неделю.
- */
-function mini_init(initData){
-  try{
-    var w = _miniWho_(initData);
-    if(!w.ok) return {ok:false, err:w.err};
-
-    var sup = null;
-    try{
-      var c = CacheService.getScriptCache().get('mini_sup');
-      if(c) sup = JSON.parse(c);
-    }catch(e){}
-    if(!sup){
-      sup = _supList_().filter(function(n){ return n.indexOf('НОВЫЙ ПОСТАВЩИК')<0; });
-      try{ CacheService.getScriptCache().put('mini_sup', JSON.stringify(sup), 600); }catch(e){}
-    }
-
-    return {
-      ok: true,
-      name: w.me.name,
-      unit: w.me.unit || '',
-      // Линию спрашиваем только у тех, кто работает на обе (Жаслан).
-      // Остальным она определяется автоматически в createRequest_.
-      // Линию выбирает тот, у кого в матрице RUN+BUILD, и согласующий:
-      // его собственные заявки бывают и текущие, и по развитию.
-      needsLine: /RUN\+BUILD/i.test(w.me.line||'') || isApproverName_(w.me.name),
-      n1: Number(prm('N1_FASTLANE',50000)),
-      suppliers: sup
-    };
-  }catch(err){
-    audit_('СИСТЕМА','','MiniApp init упал','',String(err).slice(0,200));
-    return {ok:false, err:'Сбой на сервере: '+String(err).slice(0,150)};
-  }
-}
-
-// ===================== СОЗДАНИЕ ЗАЯВКИ =====================
-/**
- * Подпись проверяется здесь заново — не полагаемся на то, что mini_init
- * уже отработал. Автор берётся ИЗ ПОДПИСИ, а не из того, что прислала
- * страница: иначе подменой запроса можно подать заявку от чужого имени.
- */
-/**
- * Ключ повтора: сессия Mini App + чат + суть заявки. Хэш нужен, чтобы
- * уложиться в ограничение длины ключа кэша и не тащить туда текст заявки.
- */
-function _idemKey_(w, sup, what, sum, cash, urgent){
-  var raw = [w.qid||'', w.chat||'', sup, what, sum, cash, urgent?1:0].join('|');
-  var d = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, raw, Utilities.Charset.UTF_8);
-  return 'idem_' + d.map(function(b){ return ('0'+(b & 0xFF).toString(16)).slice(-2); }).join('');
-}
-
-function mini_submit(initData, p){
-  try{
-    var w = _miniWho_(initData);
-    if(!w.ok) return {ok:false, err:w.err};
-    p = p || {};
-
-    var sup  = String(p.sup||'').trim();
-    var what = String(p.what||'').trim();
-    var sum  = Number(String(p.sum||'').replace(/[^\d]/g,''))||0;
-
-    // v2.3: документ приходит вместе с заявкой. Нет документа — нужна
-    // причина: заявка без счёта проходит, но осознанно и с объяснением.
-    var files = (p.files && p.files.length) ? p.files.slice(0,3) : [];
-    var noDoc = String(p.noDoc||'').trim();
-
-    if(!sup)   return {ok:false, err:'Не выбран поставщик'};
-    if(!what)  return {ok:false, err:'Не заполнено «за что платим»'};
-    if(!files.length && !noDoc)
-      return {ok:false, err:'Приложите счёт или накладную. Если документа нет — напишите, почему.'};
-    if(sum<=0) return {ok:false, err:'Сумма должна быть больше нуля'};
-    if(sum>50000000) return {ok:false, err:'Сумма выглядит слишком большой — проверьте'};
-
-    var cash = (p.cash==='Наличные') ? 'Наличные' : 'Безнал';
-    var N1 = Number(prm('N1_FASTLANE',50000));
-    // Из кассы закрывается только мелкая наличная оплата — остальное
-    // игнорируем, даже если страница прислала флаг.
-    var fromCash = !!p.paidFromCash && cash==='Наличные' && sum<=N1;
-
-    // --- Повтор той же подачи ---
-    var key = _idemKey_(w, sup, what, sum, cash, !!p.urgent), cache = null;
-    try{ cache = CacheService.getScriptCache(); }catch(e){}
-    var lock = LockService.getScriptLock();
-    var locked = false;
-    try{ locked = lock.tryLock(25000); }catch(e){}
-    try{
-      if(cache){
-        var seen = cache.get(key);
-        if(seen){
-          // '1' = первая подача ещё идёт (номера пока нет). Второй заход
-          // не создаёт заявку: лучше попросить проверить, чем задвоить.
-          if(seen==='1'){
-            audit_('СИСТЕМА','','MiniApp: повтор во время подачи','',w.me.name+' · '+sup);
-            return {ok:false, err:'Эта заявка уже отправляется. Подождите несколько секунд и посмотрите в чат — номер придёт сообщением.'};
-          }
-          audit_(SH.Z,seen,'MiniApp: повтор подачи отклонён','',w.me.name+' · '+sup+' · '+sum);
-          return {ok:true, num:Number(seen), dup:true};
-        }
-        cache.put(key,'1',1800);
-      }
-
-      // Регулярный платёж: метка в тексте + строка в расписании (ниже).
-      var regDay = Math.round(Number(p.regularDay)||0);
-      var isReg = !!p.regular && regDay>=1 && regDay<=31;
-      var num = createRequest_({
-      author: w.me.name,
-      lineChoice: String(p.line||''),
-      sup: sup,
-      what: (isReg ? '[РЕГ] ' : '') + what + (files.length ? '' : ' | без документа: '+noDoc),
-      sum: sum,
-      doc: String(p.doc||'').trim(),
-      cash: cash,
-      urgent: !!p.urgent,
-      planDate: '',
-      paidFromCash: fromCash,
-      photo: '',
-      source: 'miniapp'
-      });
-      if(cache) cache.put(key, String(num), 1800);
-
-      // Расписание заводим ПОСЛЕ заявки: если заявка не создалась,
-      // регулярка в листе не нужна.
-      if(isReg){
-        try{
-          var res = addRegular_({sup:sup, what:what, lineChoice:String(p.line||''),
-                                 sum:sum, cash:cash}, regDay);
-          audit_(SH.Z, num, 'регулярный платёж', '', res==='уже есть'
-            ? 'расписание уже было: '+sup+', '+regDay+' числа'
-            : 'каждое '+regDay+' число, '+sup);
-        }catch(e){ audit_('СИСТЕМА', num, 'регулярный платёж не заведён','',String(e).slice(0,120)); }
-      }
-
-      // Файлы прикладываем после создания строки: заявка уже существует,
-      // и сбой на большом файле её не отменит.
-      var attached = 0;
-      try{ attached = _docsFromForm_(num, files, w.chat); }
-      catch(e){ audit_('СИСТЕМА',num,'файлы из формы не приложены','',String(e).slice(0,150)); }
-
-      if(w.chat) tgSend_(w.chat,
-        '✅ Заявка №'+num+' принята.'+
-        (attached ? '' : (files.length
-          ? '\n\n⚠️ Файл приложить не удалось. Отправьте его сюда следующим сообщением — прикрепится к этой заявке.'
-          : '\n\nСчёт придёт позже — отправьте его сюда сообщением, прикрепится к этой заявке.')));
-
-      return {ok:true, num:num, attached:attached};
-    }catch(inner){
-      // Заявка не создалась — отпечаток снимаем, иначе повтор упрётся в него.
-      try{ if(cache) cache.remove(key); }catch(e){}
-      throw inner;
-    }finally{
-      if(locked) try{ lock.releaseLock(); }catch(e){}
-    }
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА','','MiniApp: заявка не создана','',txt);
-    return {ok:false, err:'Заявка не создана: '+txt.slice(0,180)};
-  }
-}
-
-// ===================== ОПЛАТА КАЗНАЧЕЕМ (v1.3) =====================
-/**
- * Кто вправе проводить оплаты. Проверка ТОЛЬКО на сервере: страница может
- * прислать что угодно, верим одной подписи Telegram.
- * @return {{ok:boolean, me:Object, chat:string, backup:boolean, err:string}}
- */
-function _miniPayWho_(initData, asName){
-  var v = _tgVerify_(initData, MINI_PAY_TTL);
-  if(!v.ok) return {ok:false, err:v.err};
-  _empReset_();
-  var me = getEmployees_().filter(function(x){ return x.chat===v.chat; })[0];
-  if(!me) return {ok:false, err:'Вас нет в системе. Отправьте боту /start и выберите себя из списка.'};
-  var pay = payerChat_(), pay2 = payer2Chat_(), am = roleChat_('amankali');
-  var isPayer = !!(pay && pay.chat===v.chat);
-  var isPayer2 = !!(pay2 && pay2.chat===v.chat);
-  var isOwner = !!(MINI_PAY_OWNER_BACKUP && am && am.chat===v.chat);
-  if(!isPayer && !isPayer2 && !isOwner){
-    // Сначала админ: Азамат бывает и тестировщиком, и ИТ-хранителем, и если
-    // он пришёл со страницы «Админ» (есть ?as=), он хочет чужой экран,
-    // а не свои тестовые заявки.
-    var asWant = String(asName||'').trim();
-    if(asWant && _isAdmin_(me.name)){
-      var target = emp_(asWant);
-      if(!target || !target.chat)
-        return {ok:false, err:'Не нашёл «'+asWant+'» среди подключённых. Откройте «Админ» и выберите заново.'};
-      var p2 = payer2Chat_();
-      return {ok:true, me:target, chat:target.chat, backup:false,
-              role:(p2 && p2.chat===target.chat) ? 'payer2' : 'payer',
-              readOnly:true, viewer:me.name, viewAs:target.name};
-    }
-    if(typeof _isTesterName_==='function' && _isTesterName_(me.name))
-      return {ok:true, me:me, chat:v.chat, role:'tester', backup:false};   // только свои тесты
-    if(_isAdmin_(me.name))
-      return {ok:false, err:'Откройте страницу «Админ» и выберите, чьими глазами смотреть.'};
-    audit_('СИСТЕМА','','MiniApp: оплата без права','',me.name);
-    return {ok:false, err:'Проводить оплаты может только казначей.'};
-  }
-  // Владелец подменяет обоих, поэтому его очередь — общая.
-  var role = isPayer ? 'payer' : (isPayer2 ? 'payer2' : 'owner');
-  return {ok:true, me:me, chat:v.chat, role:role, backup:!isPayer&&!isPayer2};
-}
-
-/** Счета из листа СЧЕТА (A — название, B — юрлицо). Тот же диапазон, что у выпадающего списка. */
-function _miniAccounts_(){
-  return sh(SH.ACC).getRange(5,1,46,2).getValues()
-    .filter(function(r){ return String(r[0]||'').trim(); })
-    .map(function(r){
-      var n = String(r[0]).trim();
-      return {name:n, entity:String(r[1]||'').trim(), cash:/касса|налич/i.test(n), company:isCompanyAcc_(n)};
+  function load(){
+    api('statusInit', {as:S.as}).then(function(r){
+      if(!r || !r.ok){ stop((r && r.err) || 'Не удалось открыть.'); return; }
+      S.view = !!r.view; S.reasons = r.reasons || [];
+      show($('loading'),false); show($('app'),true); show($('bar'), !S.view);
+      $('who').textContent = r.name + (r.items.length ? ' · ' + r.items.length + ' на ' + money(r.total) : '');
+      show($('viewNote'), S.view);
+      if(S.view) $('viewNote').textContent='Смотрите глазами: '+r.name+'. Действия отключены.';
+      draw(r.items);
+      drawBrief(r.brief);
+      // У владельца внизу сводка, у согласующего — кнопка подачи.
+      // В режиме просмотра подавать от чужого имени нельзя.
+      show($('bar'), !r.brief && !S.view);
+    }).catch(function(e){
+      stop('Сервер не отвечает.<small>'+String(e && e.message || e).slice(0,160)+'</small>');
     });
-}
+  }
 
-/**
- * Очередь оплат — тот же отбор, что в дайджесте казначея и в ГРАФИК_ОПЛАТ:
- * одобрена (любой из трёх статусов) и не отмечена «ДА».
- * Порядок: срочные, потом просроченные, потом по сроку.
- */
-/** Все строки ЗАЯВОК одним чтением — очередь и история берут из одного снимка. */
-function _payRows_(){
-  var z = sh(SH.Z), lr = z.getLastRow();
-  return lr>HDR ? z.getRange(HDR+1,1,lr-HDR,25).getValues() : [];
-}
-function _payQueue_(v, role, meName, testOnly){
-  v = v || _payRows_();
-  if(!v.length) return {items:[], total:0, overdue:0};
-  var today0 = dateOnly_(), items = [], total = 0, overdue = 0;
-  v.forEach(function(r){
-    if(!r[C.NUM-1]) return;
-    var st = String(r[C.STATUS-1]||'').trim();
-    if(PAY_SET.indexOf(st)<0) return;
-    if(String(r[C.PAID-1]||'').trim()==='ДА') return;
-    // Тестовые — только автору-тестировщику, и обе ветки сразу: он играет
-    // и Лауру, и Ерсайына. Настоящие — по роли; у тестировщика без роли
-    // казначея настоящих в очереди нет.
-    var test = isTestNum_(r[C.NUM-1]);
-    if(test){
-      // Тесты видны только в тестовом виде и только автору, причём с тем же
-      // отбором, что у живого казначея: вид Ерсайына — только ТОО, вид
-      // Лауры — всё остальное. Иначе страница нарисовала бы кнопки не той роли.
-      if(!testOnly) return;
-      if(!meName || String(r[C.AUTHOR-1]).trim()!==meName || !_isTesterName_(meName)) return;
-      if(role==='payer2' && st!==TOO_ST) return;
-      if(role==='payer'  && st===TOO_ST) return;
+  function el(tag, cls, text){
+    var n=document.createElement(tag);
+    if(cls) n.className=cls;
+    if(text!=null) n.textContent=text;
+    return n;
+  }
+
+  /**
+   * Сводка владельца — ПОД списком: сначала решения, потом цифры.
+   * Приходит только владельцу; всем остальным сервер шлёт null.
+   */
+  function bline(box, k, v, big, bad){
+    var l=el('div','bln'+(big?' big':'')+(bad?' bad':''));
+    l.appendChild(el('span','', k));
+    l.appendChild(el('b','', v==null?'':String(v)));
+    box.appendChild(l);
+  }
+  function drawBrief(b){
+    var host=$('brief'); host.innerHTML='';
+    if(!b) return;
+    var card=el('div','card');
+    card.appendChild(el('h3','','Сводка владельца'));
+
+    card.appendChild(el('div','cap','Деньги'));
+    if(b.bal && b.bal.ok){
+      b.bal.order.forEach(function(e){ bline(card, e, money(b.bal.byEnt[e])); });
+      bline(card, 'Всего на счетах', money(b.bal.total), true);
+      bline(card, 'Обязательства 7 дней', money(b.due7));
+      bline(card, 'Свободно', money(b.free), true, b.free<0);
+      if(b.cover!=null) bline(card, 'Покрытие', b.cover+'×', false, b.cover<2);
+      if(b.bal.miss) bline(card, 'Счетов без остатка', b.bal.miss, false, true);
     } else {
-      if(testOnly || role==='tester') return;
-      // Ерсайын видит только счета компании, Лаура — только всё остальное.
-      // Владелец подменяет обоих и видит всю очередь.
-      if(role==='payer2' && st!==TOO_ST) return;
-      if(role==='payer'  && st===TOO_ST) return;
+      bline(card, 'Остатки', 'недоступны', false, true);
+      bline(card, 'Обязательства 7 дней', money(b.due7));
     }
-    var full = Number(r[C.SUM-1])||0;
-    var sum = Number(r[C.APPROVED-1])||full;
-    var due = cellDate_(r[C.PLANDATE-1]);
-    var od = !!(due && due < today0);
-    total += sum; if(od) overdue++;
-    var reg = _isRegular_(String(r[C.WHAT-1]||''), String(r[C.AUTHOR-1]||''));
-    var lim = _editLimits_(sum, reg);
-    items.push({
-      num: Number(r[C.NUM-1]), sup: String(r[C.SUP-1]||''), what: String(r[C.WHAT-1]||''),
-      sum: sum, full: full, line: String(r[C.LINE-1]||'RUN'), unit: String(r[C.UNIT-1]||''),
-      reg: reg, editable: lim.editable, freeTo: lim.freeTo, maxTo: lim.maxTo,
-      too: st===TOO_ST, ownerOk: true,   // v2.2: передача идёт сразу Ерсайыну, без согласования
-      approver: (approverFor_(String(r[C.LINE-1]||'RUN'), r[C.AUTHOR-1])||{}).name || 'согласующему',
-      entity: String(r[C.ENTITY-1]||''), cash: String(r[C.CASH-1]||''),
-      urgent: /ДА/.test(String(r[C.URGENT-1]||'')), author: String(r[C.AUTHOR-1]||''),
-      due: due ? fmtD(due) : '', dueTs: due ? due.getTime() : 0, overdue: od,
-      doc: String(r[C.DOC-1]||''), code: String(r[C.CODE-1]||''), art: String(r[C.ARTICLE-1]||''),
-      acc: String(r[C.ACCOUNT-1]||''), status: st
-    });
-  });
-  items.sort(function(a,b){
-    if(a.urgent!==b.urgent) return a.urgent?-1:1;
-    if(a.overdue!==b.overdue) return a.overdue?-1:1;
-    return (a.dueTs||0)-(b.dueTs||0);
-  });
-  return {items:items, total:total, overdue:overdue};
-}
-/**
- * Регулярный платёж: создан генератором расписания. Метку ставит сам
- * generateRegulars, автор — «Система (регулярный)». Проверяем оба признака:
- * заявку могли завести руками, скопировав название с меткой.
- */
-function _isRegular_(what, author){
-  return /^\s*\[РЕГ\]/.test(String(what||'')) || /Система \(регулярный\)/i.test(String(author||''));
-}
-/**
- * Коридор уточнения. base — то, что сейчас стоит к оплате.
- * Оценки нет (0 ₸, «СУММУ УТОЧНИТЬ») — процент считать не от чего,
- * берём порог мелочи N1_FASTLANE: столько казначей и так проводит без спроса.
- */
-function _editLimits_(base, reg){
-  if(!reg && !MINI_EDIT_ALL) return {editable:false, freeTo:base, maxTo:base};
-  base = Number(base)||0;
-  var free = base>0 ? Math.max(Math.round(base*MINI_EDIT_FREE_PCT/100), MINI_EDIT_FREE_MIN)
-                    : Number(prm('N1_FASTLANE',50000))||50000;
-  return {editable:true, freeTo:base+free, maxTo:base+MINI_EDIT_MAX_UP};
-}
 
-/**
- * Оплаченное за последние MINI_PAY_HISTORY_DAYS дней, свежие сверху.
- * Дата — фактическая (колонка R), а не день нажатия: вчерашний платёж,
- * отмеченный сегодня, окажется во вчерашнем дне — как в выписке банка.
- */
-function _payHistory_(v){
-  v = v || _payRows_();
-  var tz = 'Asia/Almaty';
-  var edge = dateOnly_(); edge.setDate(edge.getDate()-MINI_PAY_HISTORY_DAYS+1);
-  var out = [];
-  v.forEach(function(r){
-    if(!r[C.NUM-1]) return;
-    if(String(r[C.PAID-1]||'').trim()!=='ДА') return;
-    var pd = cellDate_(r[C.PAIDDATE-1]);
-    if(!pd || pd < edge) return;
-    out.push({
-      num:Number(r[C.NUM-1]), sup:String(r[C.SUP-1]||''), what:String(r[C.WHAT-1]||''),
-      sum:Number(r[C.APPROVED-1])||Number(r[C.SUM-1])||0,
-      acc:String(r[C.ACCOUNT-1]||'—'), line:String(r[C.LINE-1]||'RUN'),
-      iso:Utilities.formatDate(pd, tz, 'yyyy-MM-dd'), date:fmtD(pd),
-      src:String(r[C.SOURCE-1]||'')
-    });
-  });
-  out.sort(function(a,b){ return a.iso===b.iso ? b.num-a.num : (a.iso<b.iso?1:-1); });
-  return out;
-}
+    card.appendChild(el('div','cap','Вчера оплачено'));
+    bline(card, 'Всего, '+b.yday.n+' шт.', money(b.yday.sum), true);
+    bline(card, 'Текущая, '+b.yday.run.n+' шт.', money(b.yday.run.sum));
+    bline(card, 'Развитие, '+b.yday.build.n+' шт.', money(b.yday.build.sum));
 
-/** Короткая сводка для команды /оплаты в Код.gs. */
-function _payQueueSummary_(){
-  var q = _payQueue_();
-  return {n:q.items.length, total:q.total, overdue:q.overdue};
-}
+    card.appendChild(el('div','cap','Темп месяца'));
+    bline(card, 'С 1-го числа', money(b.month.all), true);
+    bline(card, 'Текущая', money(b.month.run));
+    bline(card, 'Развитие', money(b.month.build));
+    if(b.month.firstDay) bline(card, 'Месяц только начался', '');
+    else if(b.month.delta==null) bline(card, 'Прошлый месяц', 'нет данных');
+    else bline(card, 'Прошлый месяц на эту дату',
+      money(b.month.prev)+'   '+(b.month.delta>=0?'+':'')+b.month.delta+'%');
 
-/**
- * Тестовый вид страницы оплат. Роль — по статусу заявки, с кнопки которой
- * открыли: на счёте ТОО — Ерсайын, иначе — Лаура. Открыли без заявки —
- * вид Лауры (с него путь и начинается). Для не-тестировщика — null, и
- * страница работает как обычно.
- */
-function _miniTestView_(w, n){
-  if(!_isTesterName_(w.me.name)) return null;
-  var st = '';
-  if(n && isTestNum_(n)){
-    var r = rowByNum_(n);
-    if(!r) return null;
-    var v = sh(SH.Z).getRange(r,1,1,25).getValues()[0];
-    if(String(v[C.AUTHOR-1]).trim()!==w.me.name) return null;
-    st = String(v[C.STATUS-1]||'').trim();
-  } else if(w.role!=='tester') {
-    return null;            // казначей или владелец без тестовой заявки — обычная работа
-  }
-  var too = (st===TOO_ST);
-  var as = too ? ((payer2Chat_()||{}).name||'Ерсайын') : ((payerChat_()||{}).name||'Лаура');
-  var t = {}; for(var k in w) t[k]=w[k];
-  t.role = too ? 'payer2' : 'payer';
-  t.backup = false;
-  t.testView = '🧪 '+w.me.name+' (тест) → '+as;
-  return t;
-}
-
-// ===================== СТРАНИЦА СТАТУСА И ВОПРОСЫ (v2.7) =====================
-/**
- * «Смотреть как». ИТ-хранителю (параметр ИТ_АДМИН, имена через запятую)
- * нужно видеть систему глазами каждого: иначе он поддерживает то, чего сам
- * ни разу не видел. Но только СМОТРЕТЬ: нажать за человека нельзя, иначе в
- * журнале останется чужое имя, и разделение ролей перестанет что-то значить.
- * Для действий есть тестовый режим — там он играет все роли по своей заявке.
- */
-function _isAdmin_(name){
-  var n=String(name||'').replace(/\u00A0/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
-  if(!n) return false;
-  return String(prm('ИТ_АДМИН','')||'').split(/[,;\n]+/)
-    .map(function(x){ return x.replace(/\u00A0/g,' ').replace(/\s+/g,' ').trim().toLowerCase(); })
-    .filter(String).indexOf(n)>-1;
-}
-/**
- * Подменить «кто я» на время просмотра. Возвращает {me, view, people}:
- * view=true — режим просмотра, любое действие обязано отказать.
- */
-function _asWho_(w, asName){
-  var out = {me:w.me, chat:w.chat, view:false, admin:_isAdmin_(w.me.name), people:[]};
-  if(!out.admin) return out;
-  out.people = getEmployees_().filter(function(x){ return x.chat; }).map(function(x){ return x.name; });
-  var want = String(asName||'').trim();
-  if(!want || want===w.me.name) return out;
-  var e = emp_(want);
-  if(!e) return out;
-  out.me = e; out.chat = e.chat; out.view = true;
-  return out;
-}
-function _viewStop_(a){
-  return a.view ? {ok:false, err:'Режим просмотра: вы смотрите глазами '+a.me.name+
-    '. Нажимать за человека нельзя — для проверки действий подайте заявку «ТЕСТ …».'} : null;
-}
-
-/**
- * Что ждёт решения ЭТОГО человека. Правила те же, что у /ожидание в Код.gs:
- * своя линия, поднятое владельцу, и заявка с вопросом — за тем, кто спросил.
- */
-function mini_statusInit(initData, p){
-  try{
-    var v = _tgVerify_(initData);
-    if(!v.ok) return {ok:false, err:v.err};
-    _empReset_();
-    var me = getEmployees_().filter(function(x){ return x.chat===v.chat; })[0];
-    if(!me) return {ok:false, err:'Вас нет в системе. Отправьте боту /start.'};
-    var a = _asWho_({me:me, chat:v.chat}, (p||{}).as);
-
-    var z=sh(SH.Z), lr=z.getLastRow(), items=[], total=0;
-    if(lr>HDR) z.getRange(HDR+1,1,lr-HDR,25).getValues().forEach(function(r){
-      if(!r[C.NUM-1]) return;
-      var num=Number(r[C.NUM-1]), st=String(r[C.STATUS-1]||'').trim();
-      if(DECIDABLE.indexOf(st)<0) return;
-      if(isTestNum_(num) && String(r[C.AUTHOR-1]).trim()!==a.me.name) return;
-      var asker=(st==='Вопрос' && typeof _askerGet_==='function') ? _askerGet_(num) : '';
-      var mine;
-      if(asker) mine = (asker===String(a.chat));
-      else {
-        var ap = approverFor_(String(r[C.LINE-1]||'RUN'), r[C.AUTHOR-1]);
-        mine = !!(ap && ap.chat===String(a.chat)) ||
-               (st==='На решении у Аманкали' && (roleChat_('amankali')||{}).chat===String(a.chat));
-      }
-      if(!mine) return;
-      var w0=_whatParts_(r[C.WHAT-1]);
-      var sum=Number(r[C.SUM-1])||0;
-      total+=sum;
-      items.push({
-        num:num, sup:String(r[C.SUP-1]||''), what:w0.what, noDoc:w0.noDoc,
-        sum:sum, line:String(r[C.LINE-1]||'RUN'), unit:String(r[C.UNIT-1]||''),
-        author:String(r[C.AUTHOR-1]||''), cash:String(r[C.CASH-1]||''),
-        entity:String(r[C.ENTITY-1]||''), doc:String(r[C.DOC-1]||''),
-        urgent:/ДА/.test(String(r[C.URGENT-1]||'')), status:st,
-        days:Math.max(0,Math.round((Date.now()-(cellDate_(r[C.DATE-1])||new Date()).getTime())/86400000)),
-        due: cellDate_(r[C.PLANDATE-1]) ? fmtD(cellDate_(r[C.PLANDATE-1])) : '',
-        hasDoc: z.getLastColumn()>=C.DOCS && !!_refsOf_(z, rowByNum_(num), C.DOCS).length
+    if(b.top && b.top.length && b.topTotal){
+      card.appendChild(el('div','cap','Топ-10 поставщиков за прошлый месяц'));
+      b.top.forEach(function(x,i){
+        bline(card, (i+1)+'. '+x.sup, money(x.sum)+'   '+Math.round(x.sum/b.topTotal*100)+'%');
       });
+      bline(card, 'Доля топ-10', b.topShare+'%', true);
+      bline(card, 'Поставщиков всего', b.supCount);
+    }
+    host.appendChild(card);
+  }
+
+  function draw(items){
+    var box=$('list'); box.innerHTML='';
+    show($('empty'), !items.length);
+    items.forEach(function(it){
+      var c=el('div','card');
+      var top=el('div');
+      if(it.urgent) top.appendChild(el('span','tag urg','🚨 срочно'));
+      top.appendChild(el('span','tag', it.line==='BUILD'?'Развитие':'Текущая'));
+      if(it.status!=='Подана') top.appendChild(el('span','tag', it.status));
+      top.appendChild(el('span','tag', it.days+' дн.'));
+      c.appendChild(top);
+      c.appendChild(el('h3','', '№'+it.num+' · '+it.sup));
+      c.appendChild(el('div','sum', money(it.sum)));
+      if(it.what) c.appendChild(el('div','meta', it.what));
+      if(it.noDoc) c.appendChild(el('div','meta','⚠️ Без документа: '+it.noDoc));
+      c.appendChild(el('div','meta','Автор: '+it.author+' · '+(it.unit||'—')+' · '+it.cash));
+      if(it.entity) c.appendChild(el('div','meta','🏛 '+it.entity));
+      if(it.doc) c.appendChild(el('div','meta','📄 '+it.doc));
+      if(it.due) c.appendChild(el('div','meta','📅 срок '+it.due));
+      c.appendChild(el('div','meta', it.hasDoc ? '📎 Счёт приложен — пришёл сообщением в чат' : '📎 Счёта нет'));
+
+      if(!S.view){
+        // Линия: заявку подают по виду работ, а относиться она может
+        // к развитию. Переключатель стоит выше решений не случайно —
+        // линию выбирают до того, как решить или передать.
+        var sw=el('div','lineSw');
+        ['RUN','BUILD'].forEach(function(ln){
+          var b=el('button','', ln==='RUN' ? 'Текущая' : 'Развитие');
+          b.type='button';
+          b.setAttribute('aria-pressed', String((it.line||'RUN')===ln));
+          b.onclick=function(){ setLine(c, it, ln, sw); };
+          sw.appendChild(b);
+        });
+        c.appendChild(sw);
+
+        var row=el('div','row');
+        var ok=el('button','ok','✅ Одобрить');
+        ok.onclick=function(){ act(it, 'ap', ''); };
+        var no=el('button','no','❌ Отклонить');
+        no.onclick=function(){ askReason(c, it); };
+        var qq=el('button','','❓ Вопрос');
+        qq.onclick=function(){ askWho(c, it); };
+        row.appendChild(ok); row.appendChild(no); row.appendChild(qq);
+        c.appendChild(row);
+
+        var row2=el('div','row second');
+        var up=el('button','up','👑 Передать Аманкали');
+        up.onclick=function(){ act(it, 'up', ''); };
+        row2.appendChild(up);
+        c.appendChild(row2);
+      }
+      box.appendChild(c);
     });
-    items.sort(function(x,y){ return (y.urgent?1:0)-(x.urgent?1:0) || y.days-x.days; });
-    // Сводка — только настоящему владельцу и только когда он смотрит своими
-    // глазами: в режиме «смотреть как» показывать его деньги нельзя.
-    var amc = (roleChat_('amankali')||{}).chat;
-    var brief = (amc && String(a.chat)===String(amc) && typeof ownerBrief_==='function')
-      ? ownerBrief_().data : null;   // в т.ч. при просмотре глазами владельца
-    return {ok:true, name:a.me.name, view:a.view, admin:a.admin, people:a.people,
-            reasons:REJECT_REASONS, items:items, total:total, brief:brief};
-  }catch(err){
-    audit_('СИСТЕМА','','MiniApp statusInit упал','',String(err).slice(0,200));
-    return {ok:false, err:'Сбой на сервере: '+String(err).slice(0,150)};
   }
-}
 
-/** Решение со страницы статуса. act: ap | rj | q. */
-function mini_decide(initData, p){
-  try{
-    var v = _tgVerify_(initData, MINI_PAY_TTL);
-    if(!v.ok) return {ok:false, err:v.err};
-    _empReset_();
-    p = p||{};
-    var me = getEmployees_().filter(function(x){ return x.chat===v.chat; })[0];
-    if(!me) return {ok:false, err:'Вас нет в системе.'};
-    var a = _asWho_({me:me, chat:v.chat}, p.as);
-    var stop=_viewStop_(a); if(stop) return stop;
-
-    var num=Number(p.num)||0, act=String(p.act||'');
-    if(!num) return {ok:false, err:'Не указана заявка'};
-    var r=rowByNum_(num);
-    if(!r) return {ok:false, err:'Заявка №'+num+' не найдена'};
-    var st=_statusOf_(r);
-    if(DECIDABLE.indexOf(st)<0) return {ok:false, gone:true, err:'Заявка №'+num+' уже обработана — статус «'+st+'»'};
-    if(!canDecide_(String(v.chat), num, r)) return {ok:false, err:'Решение по этой заявке принимает другой человек.'};
-
-    var text=_miniPlain_(p.text, 300);
-    if(act==='ap'){ setStatusByNum_(num,'Одобрена',text,r); return {ok:true, num:num, done:'одобрена'}; }
-    if(act==='rj'){
-      if(text.length<3) return {ok:false, needText:true, err:'Нужна причина — она уйдёт заявителю.'};
-      setStatusByNum_(num,'Отклонена',text,r); return {ok:true, num:num, done:'отклонена'};
-    }
-    // Передача владельцу. Линию, если её поменяли, пишем до смены статуса:
-    // иначе он получит заявку со старой линией и будет решать вслепую.
-    if(act==='up'){
-      var line=String(p.line||'').toUpperCase();
-      if(line==='RUN'||line==='BUILD') sh(SH.Z).getRange(r,C.LINE).setValue(line);
-      var am=roleChat_('amankali');
-      if(!am||!am.chat) return {ok:false, err:'Аманкали не подключён к боту — передавать некому.'};
-      if(text) addChat_(num, me.name, text);
-      setStatusByNum_(num,'На решении у Аманкали',text,r);
-      audit_(SH.Z,num,'передано владельцу',st,me.name+(line?' · линия '+line:''));
-      return {ok:true, num:num, done:'передана Аманкали'};
-    }
-    // Смена линии. BUILD по определению решает владелец, поэтому перевод
-    // в BUILD — это и есть передача: иначе заявка повисла бы между двумя
-    // людьми, у согласующего прав на неё уже нет, а владелец о ней не знает.
-    if(act==='line'){
-      var ln=String(p.line||'').toUpperCase();
-      if(ln!=='RUN'&&ln!=='BUILD') return {ok:false, err:'Линия указана неверно'};
-      var was=String(sh(SH.Z).getRange(r,C.LINE).getValue()||'');
-      if(was===ln) return {ok:true, num:num, done:'линия без изменений', keep:true};
-      sh(SH.Z).getRange(r,C.LINE).setValue(ln);
-      audit_(SH.Z,num,'линия',was,ln+' · '+me.name);
-      if(ln==='BUILD'){
-        var amb=roleChat_('amankali');
-        if(!amb||!amb.chat) return {ok:true, num:num, done:'линия BUILD (Аманкали не подключён)', keep:true};
-        setStatusByNum_(num,'На решении у Аманкали','',r);
-        return {ok:true, num:num, done:'развитие — передана Аманкали', keep:false};
-      }
-      return {ok:true, num:num, done:'линия RUN', keep:true};
-    }
-    if(act==='q'){
-      if(text.length<3) return {ok:false, needText:true, err:'Напишите вопрос.'};
-      addChat_(num, me.name, text);
-      if(typeof _askerSet_==='function') _askerSet_(num, v.chat);
-      setStatusByNum_(num,'Вопрос',text,r);
-      return {ok:true, num:num, done:'вопрос отправлен'};
-    }
-    return {ok:false, err:'Неизвестное действие'};
-  }catch(err){
-    audit_('СИСТЕМА','','MiniApp: решение не принято','',String(err).slice(0,200));
-    return {ok:false, err:'Сбой на сервере: '+String(err).slice(0,150)};
+  /**
+   * Смена линии. Заявка остаётся в списке: это не решение, а уточнение,
+   * и после него человек ещё выбирает, одобрить или передать.
+   */
+  function setLine(card, it, ln, sw){
+    if((it.line||'RUN')===ln) return;
+    var kids=sw.children;
+    api('decide', {num:it.num, act:'line', line:ln, as:S.as}).then(function(r){
+      if(!r || !r.ok){ note(card, (r&&r.err)||'Не удалось сменить линию'); return; }
+      // Развитие решает владелец: заявка уходит к нему и из списка пропадает.
+      if(r.keep===false){ load(); return; }
+      it.line = ln;
+      for(var i=0;i<kids.length;i++)
+        kids[i].setAttribute('aria-pressed', String(i===(ln==='RUN'?0:1)));
+    });
   }
-}
-
-/**
- * Вопрос со страницы оплат. Казначей выбирает адресата сам: по одной заявке
- * спрашивать приходится и у заявителя (что за товар), и у согласующего
- * (почему одобрено столько), и у второго казначея (кто платит).
- * Статус заявки при этом НЕ меняется: «Вопрос» снял бы её из очереди оплат,
- * а платёж никто не отменял — казначей просто уточняет.
- */
-function mini_ask(initData, p){
-  try{
-    var v = _tgVerify_(initData, MINI_PAY_TTL);   // страницы оплат и статуса живут 4 часа
-    if(!v.ok) return {ok:false, err:v.err};
-    _empReset_();
-    p = p||{};
-    var me = getEmployees_().filter(function(x){ return x.chat===v.chat; })[0];
-    if(!me) return {ok:false, err:'Вас нет в системе.'};
-    var a = _asWho_({me:me, chat:v.chat}, p.as);
-    var stop=_viewStop_(a); if(stop) return stop;
-
-    var num=Number(p.num)||0, to=String(p.to||'author');
-    var text=_miniPlain_(p.text, 400);
-    if(!num) return {ok:false, err:'Не указана заявка'};
-    if(text.length<3) return {ok:false, err:'Напишите вопрос'};
-    var r=rowByNum_(num);
-    if(!r) return {ok:false, err:'Заявка №'+num+' не найдена'};
-    var row=sh(SH.Z).getRange(r,1,1,25).getValues()[0];
-
-    var target = (to==='alua')     ? approverFor_(String(row[C.LINE-1]||'RUN'), row[C.AUTHOR-1])
-               : (to==='amankali') ? roleChat_('amankali')
-               : (to==='yersayin') ? payer2Chat_()
-               : (to==='laura')    ? payerChat_()
-               : emp_(row[C.AUTHOR-1]);
-    if(!target || !target.chat)
-      return {ok:false, err:'Адресат не подключён к боту — спросить через систему не выйдет.'};
-
-    addChat_(num, me.name, 'Вопрос ('+target.name+'): '+text);
-    // Ответ должен вернуться тому, кто спросил, а не «согласующему по линии».
-    // Иначе Лаура спрашивает Аманкали, а его ответ читает заявитель.
-    _askBack_(num, target.chat, v.chat);
-    tgSend_(target.chat,'❓ Вопрос по заявке №'+num+' · '+_h_(row[C.SUP-1])+' · <b>'+fmtN(row[C.SUM-1])+' ₸</b>'+
-      '\nот '+_h_(me.name)+'\n\n'+_h_(text)+
-      '\n\nОтветьте на это сообщение — номер подставится сам.');
-    audit_(SH.Z,num,'вопрос казначея','',me.name+' → '+target.name);
-    return {ok:true, num:num, to:target.name};
-  }catch(err){
-    audit_('СИСТЕМА','','MiniApp: вопрос не отправлен','',String(err).slice(0,200));
-    return {ok:false, err:'Сбой на сервере: '+String(err).slice(0,150)};
+  function note(card, text){
+    var n=el('div','meta', text);
+    n.style.color='var(--danger,#d64545)';
+    card.appendChild(n);
   }
-}
 
-/** Стартовые данные страницы оплат. data.n — заявка, с кнопки которой открыли. */
-function mini_payInit(initData, p){
-  try{
-    var w = _miniPayWho_(initData, (p||{}).as);
-    if(!w.ok) return {ok:false, err:w.err};
-    var n = Number((p||{}).n)||0;
-    // Тест: страница строит интерфейс по одной роли на всю сессию — кнопку
-    // «передать», список счетов, подписи. Тестировщик же играет и Лауру, и
-    // Ерсайына. Поэтому роль сессии берём из заявки, с кнопки которой открыли:
-    // сообщение «→ Ерсайын» открывает вид Ерсайына, «→ Лаура» — вид Лауры.
-    // В режиме просмотра тестовый вид не включаем: админ смотрит рабочий экран.
-    var tv = w.readOnly ? null : _miniTestView_(w, n);
-    if(tv) w = tv;
-    var rows = _payRows_();
-    var q = _payQueue_(rows, w.role, w.me.name, !!w.testView);
-    var focus = null;
-    if(n){
-      var inQ = q.items.some(function(x){ return x.num===n; });
-      if(inQ) focus = {num:n, inQueue:true};
-      else {
-        var r = rowByNum_(n);
-        focus = {num:n, inQueue:false, status: r ? _statusOf_(r) : 'не найдена'};
-      }
-    }
-    var tz = 'Asia/Almaty', now0 = new Date();
-    return {
-      ok:true, name:(w.testView ? w.testView : w.me.name), backup:w.backup, role:w.role,
-      payer2Name: (payer2Chat_()||{}).name || 'Ерсайын',
-      payerName: (payerChat_()||{}).name || 'Лаура',
-      ownerName: (roleChat_('amankali')||{}).name || 'Аманкали',
-      accounts:_miniAccounts_().filter(function(a){ return w.role==='payer2' ? a.company : true; }),
-      // Кнопка подачи на странице оплат — только второму казначею.
-      // У Лауры её нет намеренно: её заявки подают профильные сотрудники.
-      canSubmit: !w.readOnly && _paySubmitAllowed_(w.me, w.chat),
-      readOnly: !!w.readOnly, viewAs: w.viewAs || '',
-      items:q.items, total:q.total,
-      // История оплат: чужие тесты не показываем, свои — автору-тестировщику.
-      paid:_payHistory_(rows.filter(function(r){
-        return !isTestNum_(r[C.NUM-1]) || (String(r[C.AUTHOR-1]).trim()===w.me.name && _isTesterName_(w.me.name));
-      })), historyDays:MINI_PAY_HISTORY_DAYS,
-      payDay:isPayDay_(),
-      today: Utilities.formatDate(now0, tz, 'yyyy-MM-dd'),
-      minDate: Utilities.formatDate(new Date(now0.getTime()-MINI_PAY_MAX_BACK*86400000), tz, 'yyyy-MM-dd'),
-      focus:focus
+  // Причина отклонения — теми же формулировками, что в боте: так решения
+  // одинаково читаются в чате и в таблице.
+  function askReason(card, it){
+    var w=el('div','ask');
+    var sel=document.createElement('select');
+    S.reasons.concat(['✍️ Своя причина']).forEach(function(t,i){
+      var o=document.createElement('option'); o.value=(i<S.reasons.length?t:''); o.textContent=t; sel.appendChild(o);
+    });
+    var ta=document.createElement('textarea'); ta.placeholder='Причина'; ta.rows=2; ta.classList.add('hidden');
+    sel.addEventListener('change', function(){ show(ta, !sel.value); if(!sel.value) ta.focus(); });
+    var row=el('div','row');
+    var go=el('button','no','Отклонить');
+    go.onclick=function(){ act(it,'rj', sel.value || ta.value.trim()); };
+    var cancel=el('button','','Отмена');
+    cancel.onclick=function(){ w.remove(); };
+    row.appendChild(go); row.appendChild(cancel);
+    w.appendChild(sel); w.appendChild(ta); w.appendChild(row);
+    card.appendChild(w); sel.focus();
+  }
+
+  // Вопрос с выбором адресата. Заявителю — это решение по заявке: статус
+  // становится «Вопрос», и она ждёт ответа. Остальным — просто сообщение:
+  // заявка из очереди не уходит, потому что решение всё равно за вами.
+  function askWho(card, it){
+    var w=el('div','ask');
+    var sel=document.createElement('select');
+    [['author','Заявителю — '+it.author+' (заявка встанет на паузу)'],
+     ['alua','Согласующему RUN'],
+     ['amankali','Владельцу'],
+     ['laura','Казначею'],
+     ['yersayin','Казначею счетов компании']].forEach(function(x){
+      var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; sel.appendChild(o);
+    });
+    var ta=document.createElement('textarea'); ta.rows=2; ta.placeholder='Вопрос одним сообщением';
+    var row=el('div','row');
+    var go=el('button','ok','Отправить');
+    go.onclick=function(){
+      var t=ta.value.trim();
+      if(t.length<3){ err('Напишите вопрос.'); return; }
+      if(sel.value==='author'){ act(it,'q',t); return; }   // меняет статус на «Вопрос»
+      go.disabled=true; go.textContent='Отправляю…';
+      api('ask',{num:it.num, to:sel.value, text:t, as:S.as}).then(function(r){
+        if(!r || !r.ok){ err((r && r.err)||'Не отправилось.'); go.disabled=false; go.textContent='Отправить'; return; }
+        w.remove(); err('❓ Вопрос отправлен: '+r.to+'. Ответ придёт вам сообщением.');
+      }).catch(function(){
+        err('Ответ не пришёл. Проверьте чат, прежде чем отправлять снова.');
+        go.disabled=false; go.textContent='Отправить';
+      });
     };
-  }catch(err){
-    audit_('СИСТЕМА','','MiniApp payInit упал','',String(err).slice(0,200));
-    return {ok:false, err:'Сбой на сервере: '+String(err).slice(0,150)};
+    var cancel=el('button','','Отмена');
+    cancel.onclick=function(){ w.remove(); };
+    row.appendChild(go); row.appendChild(cancel);
+    w.appendChild(sel); w.appendChild(ta); w.appendChild(row);
+    card.appendChild(w); ta.focus();
   }
-}
 
-/**
- * Дата оплаты со страницы ('yyyy-MM-dd'). Сравнение — строками в поясе
- * Asia/Almaty: часовой пояс проекта Apps Script может отличаться, и тогда
- * утром по Астане «сегодня» на сервере было бы ещё вчера — оплату сегодняшним
- * числом отбило бы как «дату в будущем».
- * Записываем полдень, чтобы дата не съехала на соседние сутки при показе.
- */
-function _miniPayDate_(s){
-  var t = String(s||'').trim();
-  var m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if(!m) return {ok:false, err:'Дата оплаты не распознана'};
-  var tz = 'Asia/Almaty', now0 = new Date();
-  var today = Utilities.formatDate(now0, tz, 'yyyy-MM-dd');
-  var min = Utilities.formatDate(new Date(now0.getTime()-MINI_PAY_MAX_BACK*86400000), tz, 'yyyy-MM-dd');
-  if(t > today) return {ok:false, err:'Дата оплаты не может быть в будущем'};
-  if(t < min)   return {ok:false, err:'Дата оплаты старше '+MINI_PAY_MAX_BACK+' дней — такую отметьте в таблице'};
-  return {ok:true, date:new Date(Number(m[1]), Number(m[2])-1, Number(m[3]), 12, 0, 0)};
-}
-
-/** Общие проверки заявки перед действием казначея. Вызывать ПОД ЗАМКОМ. */
-function _miniPayRow_(num){
-  var z = sh(SH.Z), r = rowByNum_(num);
-  if(!r) return {ok:false, err:'Заявка №'+num+' не найдена'};
-  var row = z.getRange(r,1,1,25).getValues()[0];
-  var st = String(row[C.STATUS-1]||'').trim();
-  if(String(row[C.PAID-1]||'').trim()==='ДА' || st==='Оплачена')
-    return {ok:false, gone:true, status:'Оплачена', err:'Заявка №'+num+' уже отмечена оплаченной'};
-  if(PAY_SET.indexOf(st)<0)
-    return {ok:false, gone:true, status:st, err:'Заявка №'+num+' уже не в очереди оплат — статус «'+st+'»'};
-  return {ok:true, z:z, r:r, row:row, st:st,
-    sum: Number(row[C.APPROVED-1])||Number(row[C.SUM-1])||0};
-}
-
-/** Текст без угловых скобок и амперсанда: уведомления уходят с parse_mode HTML. */
-function _miniPlain_(s, max){
-  return String(s||'').replace(/[<>&]/g,' ').replace(/\s+/g,' ').trim().slice(0, max||300);
-}
-
-/**
- * Отметка оплаты. data: {num, sum, acc, date, factSum, why}.
- * sum — сумма, которую казначей видел на экране. Не совпала с таблицей —
- * отказ: одобренную сумму могли поменять после открытия страницы.
- * factSum — фактическая сумма счёта, если она отличается от предварительной.
- */
-/**
- * v2.1: тестовая заявка на странице оплат.
- * Автор-тестировщик проходит шаг казначея за ту роль, чей это шаг:
- * заявка на счёте ТОО — по правилам Ерсайына (только счета компании),
- * остальные — по правилам Лауры (счёт ТОО — только через передачу).
- * Чужую тестовую заявку не тронет никто, а на настоящие у тестировщика
- * прав не прибавляется: без роли казначея он их не видит и не проводит.
- */
-function _miniTestGate_(w, c){
-  var num = Number(c.row[C.NUM-1]);
-  if(!isTestNum_(num)){
-    if(w.role==='tester') return {err:'Проводить оплаты может только казначей.'};
-    return {w:w};
+  function askText(card, it, action, title){
+    var w=el('div','ask');
+    w.appendChild(el('div','meta', title));
+    var ta=document.createElement('textarea'); ta.rows=2; ta.placeholder='Текст';
+    var row=el('div','row');
+    var go=el('button','ok','Отправить');
+    go.onclick=function(){ act(it, action, ta.value.trim()); };
+    var cancel=el('button','','Отмена');
+    cancel.onclick=function(){ w.remove(); };
+    row.appendChild(go); row.appendChild(cancel);
+    w.appendChild(ta); w.appendChild(row);
+    card.appendChild(w); ta.focus();
   }
-  if(String(c.row[C.AUTHOR-1]).trim()!==w.me.name || !_isTesterName_(w.me.name))
-    return {err:'Заявка №'+num+' — тестовая, её проводит только автор.'};
-  var t = {}; for(var k in w) t[k]=w[k];
-  t.role = (c.st===TOO_ST) ? 'payer2' : 'payer';
-  t.backup = false;
-  return {w:t};
-}
 
-/**
- * «Приложить через чат». Выбор файла внутри мини-приложения у части
- * устройств возвращает пусто — браузер Telegram открывает окно, но файл не
- * отдаёт. Полагаться на него как на единственный путь нельзя: платёжка
- * важнее удобства. Эта кнопка закрывает страницу и присылает казначею
- * сообщение с номером заявки — ответ на него фотографией или файлом
- * прикладывает документ обычным путём, который работает всегда.
- */
-function mini_docAsk(initData, p){
-  try{
-    var w = _miniPayWho_(initData);
-    if(!w.ok) return {ok:false, err:w.err};
-    var num = Number((p||{}).num)||0;
-    if(!num) return {ok:false, err:'Не указана заявка'};
-    _testGuard_(num);
-    var r = rowByNum_(num);
-    if(!r) return {ok:false, err:'Заявка №'+num+' не найдена'};
-    var v = sh(SH.Z).getRange(r,1,1,25).getValues()[0];
-    if(!w.chat) return {ok:false, err:'Вы не подключены к боту — отправьте /start'};
-    tgSend_(w.chat, '🧾 Платёжка по заявке №'+num+' · '+_h_(v[C.SUP-1])+' · <b>'+fmtN(v[C.SUM-1])+' ₸</b>\n'+
-      'Пришлите её <b>ответом на это сообщение</b> — фото или файл. Она уйдёт заявителю.');
-    return {ok:true, num:num};
-  }catch(err){
-    return {ok:false, err:String(err).slice(0,180)};
+  function act(it, action, text){
+    if(S.busy[it.num]) return;
+    S.busy[it.num]=true; err('');
+    api('decide', {num:it.num, act:action, text:text, as:S.as}).then(function(r){
+      S.busy[it.num]=false;
+      if(!r || !r.ok){ err((r && r.err) || 'Не получилось.'); return; }
+      if(tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      load();
+    }).catch(function(){
+      S.busy[it.num]=false;
+      err('Ответ не пришёл. Обновите страницу и посмотрите, изменился ли статус, прежде чем нажимать снова.');
+    });
   }
-}
 
-function mini_pay(initData, p){
-  var w = _miniPayWho_(initData);
-  if(!w.ok) return {ok:false, err:w.err};
-  p = p || {};
-  var num = Number(p.num)||0;
-  if(!num) return {ok:false, err:'Не указан номер заявки'};
-  var acc = String(p.acc||'').trim();
-  var accObj = _miniAccounts_().filter(function(a){ return a.name===acc; })[0];
-  if(!accObj) return {ok:false, err:'Счёт «'+acc+'» не найден в листе СЧЕТА. Обновите список.'};
-  var d = _miniPayDate_(p.date);
-  if(!d.ok) return {ok:false, err:d.err};
-
-  var lock = LockService.getScriptLock();
-  try{ lock.waitLock(20000); }
-  catch(e){ return {ok:false, err:'Система занята — нажмите ещё раз через полминуты. Оплата не отмечена.'}; }
-  try{
-    var c = _miniPayRow_(num);
-    if(!c.ok) return {ok:false, gone:!!c.gone, status:c.status, err:c.err};
-    var tg = _miniTestGate_(w, c); if(tg.err) return {ok:false, err:tg.err}; w = tg.w;
-    if(Number(p.sum)!==c.sum)
-      return {ok:false, stale:true, err:'Сумма к оплате изменилась: теперь '+fmtN(c.sum)+' ₸. Обновите список и проверьте.'};
-
-    // --- Кто и с какого счёта вправе платить ---
-    var isToo = (c.st===TOO_ST), accCompany = isCompanyAcc_(acc);
-    if(isToo && w.role==='payer')
-      return {ok:false, gone:true, status:c.st, err:'Заявка №'+num+' передана на оплату со счёта компании — её проводит '+((payer2Chat_()||{}).name||'Ерсайын')+'.'};
-    if(!isToo && w.role==='payer2')
-      return {ok:false, gone:true, status:c.st, err:'Эту заявку оплачивает '+((payerChat_()||{}).name||'Лаура')+'. Вам приходят только платежи со счетов компании.'};
-    if(w.role==='payer2' && !accCompany)
-      return {ok:false, err:'Счёт «'+acc+'» не относится к компании. Со счетов ИП платит '+((payerChat_()||{}).name||'Лаура')+'.'};
-    if(w.role==='payer' && accCompany)
-      return {ok:false, toRoute:true, err:'Со счёта компании платит '+((payer2Chat_()||{}).name||'Ерсайын')+'. Передайте заявку — кнопка под выбранным счётом.'};
-
-    // --- Уточнение суммы ---
-    var reg = _isRegular_(String(c.row[C.WHAT-1]||''), String(c.row[C.AUTHOR-1]||''));
-    var lim = _editLimits_(c.sum, reg);
-    var fact = c.sum, why = _miniPlain_(p.why, 200), overFree = false;
-    if(p.factSum !== undefined && p.factSum !== null && String(p.factSum)!==''){
-      fact = Math.round(Number(p.factSum));
-      if(!isFinite(fact) || fact<=0) return {ok:false, err:'Фактическая сумма указана неверно'};
-      if(fact!==c.sum){
-        if(!lim.editable) return {ok:false, err:'Сумму этой заявки меняет согласующий — она была одобрена именно такой.'};
-        if(fact>lim.maxTo) return {ok:false, err:'Больше '+fmtN(lim.maxTo)+' ₸ по этой заявке провести нельзя. Это уже не уточнение счёта, а новое решение: попросите согласующего поднять сумму в таблице.'};
-        if(fact>lim.freeTo){
-          overFree = true;
-          if(why.length<3) return {ok:false, needWhy:true, err:'Превышение больше обычного — напишите, почему: это уйдёт согласующему.'};
-        }
-      }
-    }
-    if(!fact) return {ok:false, err:'Не указана сумма платежа'};
-    if(fact!==c.sum){
-      c.z.getRange(c.r,C.APPROVED).setValue(fact);   // в реестр и ФИНУЧЁТ уйдёт факт
-      SpreadsheetApp.flush();
-      audit_(SH.Z,num,'уточнение суммы казначеем',c.sum,fact+(why?' · '+why:''));
-      addChat_(num, w.me.name, 'Сумма уточнена при оплате: '+fmtN(c.sum)+' → '+fmtN(fact)+' ₸'+(why?'. '+why:''));
-    }
-
-    c.z.getRange(c.r,C.ACCOUNT).setValue(acc);
-    c.z.getRange(c.r,C.PAIDDATE).setValue(d.date);
-    SpreadsheetApp.flush();
-    markPaid_(c.z, c.r);   // статус, реестр, аудит, уведомление заявителю — как от галочки
-    audit_(SH.Z,num,'оплата через Telegram','',w.me.name+' · '+acc+' · '+fmtD(d.date));
-    _payRecentAdd_(w.chat, num);   // платёжка без ответа на сообщение найдёт эту заявку
-
-    // v2.4: платёжка, приложенная прямо на экране оплаты. Необязательна —
-    // банк иногда выдаёт документ позже, и тогда её дошлют ответом на
-    // сообщение бота. Сбой на файле не отменяет уже проведённую оплату.
-    var payDocs = 0;
-    try{
-      if(p.files && p.files.length) payDocs = _filesFromForm_(num, p.files.slice(0,3), w.chat, 'pay');
-    }catch(e){ audit_('СИСТЕМА',num,'платёжка из формы не приложена','',String(e).slice(0,150)); }
-
-    // Превышение сверх коридора — это расход больше одобренного: согласующий
-    // и владелец должны узнать сразу, а не на сверке.
-    if(overFree){
-      var msg = '🔺 Оплачено больше одобренного: №'+num+' · '+c.row[C.SUP-1]+
-        '\nБыло '+fmtN(c.sum)+' ₸ → оплачено <b>'+fmtN(fact)+' ₸</b>'+
-        '\nПричина ('+w.me.name+'): '+why;
-      var seen = {};
-      [approverFor_(String(c.row[C.LINE-1]||'RUN'), c.row[C.AUTHOR-1]), roleChat_('amankali')].forEach(function(e){
-        if(e && e.chat && !seen[e.chat]){ seen[e.chat]=1; tgSend_(e.chat,msg); }
-      });
-    }
-
-    // Замещение: казначей должен узнать, что его очередь двигали без него.
-    if(w.backup){
-      var pay = payerChat_();
-      if(pay && pay.chat && pay.chat!==w.chat)
-        tgSend_(pay.chat,'💸 '+w.me.name+' отметил оплату №'+num+' · '+c.row[C.SUP-1]+' · <b>'+fmtN(fact)+' ₸</b> · '+acc);
-    }
-    return {ok:true, num:num, payDocs:payDocs, acc:acc, date:fmtD(d.date), sum:fact,
-      iso:Utilities.formatDate(d.date,'Asia/Almaty','yyyy-MM-dd')};
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА',num,'MiniApp: оплата не отмечена','',txt);
-    return {ok:false, err:'Сбой на сервере, оплата не отмечена: '+txt.slice(0,150)};
-  }finally{ lock.releaseLock(); }
-}
-
-/**
- * Счёт выше потолка — просим согласующего утвердить новую сумму.
- * data: {num, sum, factSum, why}. Фактическая сумма сразу ложится в «Одобрено»:
- * согласующий жмёт «Одобрить» и тем самым утверждает именно её. До решения
- * заявка не одобрена — снимаем строку обязательства и возвращаем в «Подана».
- */
-function mini_raise(initData, p){
-  var w = _miniPayWho_(initData);
-  if(!w.ok) return {ok:false, err:w.err};
-  p = p || {};
-  var num = Number(p.num)||0;
-  if(!num) return {ok:false, err:'Не указан номер заявки'};
-  var fact = Math.round(Number(p.factSum)||0);
-  if(!isFinite(fact) || fact<=0) return {ok:false, err:'Укажите сумму по счёту'};
-  var why = _miniPlain_(p.why, 300);
-  if(why.length<3) return {ok:false, needWhy:true, err:'Напишите, из-за чего сумма выросла — это увидит согласующий.'};
-
-  var lock = LockService.getScriptLock();
-  try{ lock.waitLock(20000); }
-  catch(e){ return {ok:false, err:'Система занята — нажмите ещё раз через полминуты.'}; }
-  try{
-    var c = _miniPayRow_(num);
-    if(!c.ok) return {ok:false, gone:!!c.gone, status:c.status, err:c.err};
-    var tg = _miniTestGate_(w, c); if(tg.err) return {ok:false, err:tg.err}; w = tg.w;
-    if(Number(p.sum)!==c.sum)
-      return {ok:false, stale:true, err:'Сумма изменилась: теперь '+fmtN(c.sum)+' ₸. Обновите список.'};
-    var reg = _isRegular_(String(c.row[C.WHAT-1]||''), String(c.row[C.AUTHOR-1]||''));
-    if(!_editLimits_(c.sum, reg).editable)
-      return {ok:false, err:'Сумму этой заявки меняет согласующий в таблице.'};
-    if(fact<=c.sum)
-      return {ok:false, err:'Эта сумма не больше одобренной — согласование не нужно, проводите оплату.'};
-
-    var line = String(c.row[C.LINE-1]||'RUN');
-    c.z.getRange(c.r,C.APPROVED).setValue(fact);
-    c.z.getRange(c.r,C.COMMENT).setValue('Казначей: счёт на '+fmtN(fact)+' ₸. '+why);
-    c.z.getRange(c.r,C.STATUS).setValue('Подана');
-    SpreadsheetApp.flush();
-    removeREG_(num);   // до решения это не обязательство
-    audit_(SH.Z,num,'запрошено согласование суммы',c.sum,fact+' · '+w.me.name+': '+why);
-    addChat_(num, w.me.name, 'Счёт на '+fmtN(fact)+' ₸ вместо '+fmtN(c.sum)+' ₸. '+why);
-
-    var ap = approverFor_(line, c.row[C.AUTHOR-1]);
-    if(ap && ap.chat)
-      tgSend_(ap.chat,'📈 Счёт больше одобренного: №'+num+' ('+line+') · '+c.row[C.SUP-1]+
-        '\nОдобрено было <b>'+fmtN(c.sum)+' ₸</b>, счёт на <b>'+fmtN(fact)+' ₸</b>'+
-        '\n'+w.me.name+': '+why+
-        '\n\nОдобрите — и заявка вернётся в оплату уже на '+fmtN(fact)+' ₸.', kbDecision_(num));
-    else audit_('СИСТЕМА',num,'согласующий не найден','','линия '+line);
-    return {ok:true, num:num, to:(ap&&ap.name)||'согласующему', sum:fact};
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА',num,'MiniApp: согласование суммы не отправлено','',txt);
-    return {ok:false, err:'Сбой на сервере, заявка не отправлена: '+txt.slice(0,150)};
-  }finally{ lock.releaseLock(); }
-}
-
-/**
- * Передача платежа на счёт компании. data: {num, sum, acc}.
- * Второго согласования не создаём там, где владелец уже решал: заявка идёт
- * прямо в очередь Ерсайына. Если не решал — уходит Аманкали, и уже его
- * одобрение ставит её Ерсайыну (см. applyDecision_ в Код.gs).
- */
-function mini_route(initData, p){
-  var w = _miniPayWho_(initData);
-  if(!w.ok) return {ok:false, err:w.err};
-  if(w.role==='payer2') return {ok:false, err:'Вы и так платите со счетов компании — передавать некому.'};
-  p = p || {};
-  var num = Number(p.num)||0;
-  if(!num) return {ok:false, err:'Не указан номер заявки'};
-  var acc = String(p.acc||'').trim();
-  if(!isCompanyAcc_(acc)) return {ok:false, err:'Передавать нужно на счёт компании. «'+acc+'» к ней не относится.'};
-
-  var lock = LockService.getScriptLock();
-  try{ lock.waitLock(20000); }
-  catch(e){ return {ok:false, err:'Система занята — нажмите ещё раз через полминуты.'}; }
-  try{
-    var c = _miniPayRow_(num);
-    if(!c.ok) return {ok:false, gone:!!c.gone, status:c.status, err:c.err};
-    var tg = _miniTestGate_(w, c); if(tg.err) return {ok:false, err:tg.err}; w = tg.w;
-    if(c.st===TOO_ST) return {ok:false, gone:true, status:c.st, err:'Заявка №'+num+' уже у '+((payer2Chat_()||{}).name||'Ерсайына')+'.'};
-    if(w.role==='payer2') return {ok:false, err:'Вы и так платите со счетов компании — передавать некому.'};
-    if(Number(p.sum)!==c.sum)
-      return {ok:false, stale:true, err:'Сумма изменилась: теперь '+fmtN(c.sum)+' ₸. Обновите список.'};
-
-    // v2.2: передача Ерсайыну — это смена плательщика, а не новое решение.
-    // Заявку уже согласовали по линии: BUILD — Аманкали, RUN — Алуа. Второй
-    // круг у владельца добавлял день и путал — «почему я одобряю дважды».
-    // Право платить со счёта компании есть только у Ерсайына, поэтому выбор
-    // такого счёта просто переводит заявку к нему.
-    c.z.getRange(c.r,C.ACCOUNT).setValue(acc);   // подсказка второму казначею, он может сменить
-    SpreadsheetApp.flush();
-    // Закрываем «К оплате» у Лауры ДО смены статуса: после неё в списке
-    // появится сообщение Ерсайына, и закрылись бы оба — вместе с его кнопкой.
-    _payMsgClose_(num, '➡️ Передано '+((payer2Chat_()||{}).name||'Ерсайыну')+' — счёт компании: '+acc);
-    setStatusByNum_(num, TOO_ST, '', c.r);       // статус сам уведомит Ерсайына
-    audit_(SH.Z,num,'передано на счёт ТОО','',w.me.name+' → '+((payer2Chat_()||{}).name||'Ерсайын')+' · '+acc);
-    addChat_(num, w.me.name, 'Передано на оплату со счёта компании: '+acc);
-    return {ok:true, num:num, direct:true, to:((payer2Chat_()||{}).name||'Ерсайын')};
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА',num,'MiniApp: передача не выполнена','',txt);
-    return {ok:false, err:'Сбой на сервере, заявка не передана: '+txt.slice(0,150)};
-  }finally{ lock.releaseLock(); }
-}
-
-/**
- * Возврат ошибочной передачи. data: {num}.
- * Кто может: второй казначей — вернуть Лауре всё, что у него в очереди;
- * казначей (или владелец) — отозвать заявку, которую сам передал, пока она
- * не оплачена. Статус возвращается в «Одобрена», счёт списания очищается —
- * он подсказка следующему, и чужая подсказка только путает.
- * Строку реестра не трогаем: обязательство никуда не делось, менялся
- * лишь исполнитель.
- */
-function mini_unroute(initData, p){
-  var w = _miniPayWho_(initData);
-  if(!w.ok) return {ok:false, err:w.err};
-  p = p || {};
-  var num = Number(p.num)||0;
-  if(!num) return {ok:false, err:'Не указан номер заявки'};
-
-  var lock = LockService.getScriptLock();
-  try{ lock.waitLock(20000); }
-  catch(e){ return {ok:false, err:'Система занята — нажмите ещё раз через полминуты.'}; }
-  try{
-    var z = sh(SH.Z), r = rowByNum_(num);
-    if(!r) return {ok:false, err:'Заявка №'+num+' не найдена'};
-    var row = z.getRange(r,1,1,25).getValues()[0];
-    var st = String(row[C.STATUS-1]||'').trim();
-    if(String(row[C.PAID-1]||'').trim()==='ДА')
-      return {ok:false, gone:true, status:'Оплачена', err:'Заявка №'+num+' уже оплачена — возвращать нечего.'};
-    if(st!==TOO_ST)
-      return {ok:false, gone:true, status:st, err:'Заявка №'+num+' не в очереди счетов компании — статус «'+st+'».'};
-
-    z.getRange(r,C.ACCOUNT).setValue('');
-    z.getRange(r,C.STATUS).setValue('Одобрена');
-    SpreadsheetApp.flush();
-    writeREG_(r,'К оплате');
-    audit_(SH.Z,num,'возврат с оплаты ТОО',TOO_ST,w.me.name+' → Одобрена');
-    addChat_(num, w.me.name, 'Возвращено в обычную очередь оплат');
-
-    // Сообщаем второй стороне: очередь у неё изменилась без её участия.
-    var la = payerChat_(), ye = payer2Chat_();
-    var other = (w.role==='payer2') ? la : ye;
-    if(other && other.chat && String(other.chat)!==String(w.chat))
-      tgSend_(other.chat,'↩️ №'+num+' · '+row[C.SUP-1]+' · <b>'+fmtN(Number(row[C.APPROVED-1])||Number(row[C.SUM-1])||0)+' ₸</b>'+
-        '\n'+w.me.name+' вернул заявку в обычную очередь оплат.');
-    if(la && la.chat && String(la.chat)!==String(w.chat) && w.role!=='payer2')
-      {} // казначей вернул сам себе — сообщать некому
-    return {ok:true, num:num, to:((la&&la.name)||'Лаура')};
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА',num,'MiniApp: возврат не выполнен','',txt);
-    return {ok:false, err:'Сбой на сервере, заявка не возвращена: '+txt.slice(0,150)};
-  }finally{ lock.releaseLock(); }
-}
-
-/**
- * Отказ в оплате. data: {num, reason}. Причина обязательна — она уходит
- * заявителю и согласующему. Старый комментарий согласующего сохраняем
- * в журнале аудита: колонка одна, и причина казначея его перезапишет.
- */
-function mini_refuse(initData, p){
-  var w = _miniPayWho_(initData);
-  if(!w.ok) return {ok:false, err:w.err};
-  p = p || {};
-  var num = Number(p.num)||0;
-  if(!num) return {ok:false, err:'Не указан номер заявки'};
-  var reason = _miniPlain_(p.reason, 300);
-  if(reason.length<3) return {ok:false, err:'Напишите причину — её получат заявитель и согласующий'};
-
-  var lock = LockService.getScriptLock();
-  try{ lock.waitLock(20000); }
-  catch(e){ return {ok:false, err:'Система занята — нажмите ещё раз через полминуты.'}; }
-  try{
-    var c = _miniPayRow_(num);
-    if(!c.ok) return {ok:false, gone:!!c.gone, status:c.status, err:c.err};
-    var tg = _miniTestGate_(w, c); if(tg.err) return {ok:false, err:tg.err}; w = tg.w;
-    var oldComment = String(c.row[C.COMMENT-1]||'');
-    addChat_(num, w.me.name, 'Отказ в оплате: '+reason);
-    setStatusByNum_(num,'Отказ в оплате',reason,c.r);   // реестр, уведомления — как из таблицы
-    audit_(SH.Z,num,'отказ в оплате через Telegram',oldComment,w.me.name+': '+reason);
-    return {ok:true, num:num};
-  }catch(err){
-    var txt = String(err && err.stack ? err.stack : err).slice(0,300);
-    audit_('СИСТЕМА',num,'MiniApp: отказ не записан','',txt);
-    return {ok:false, err:'Сбой на сервере, отказ не записан: '+txt.slice(0,150)};
-  }finally{ lock.releaseLock(); }
-}
-
-/**
- * Адрес страницы оплат: папка PAGE_URL + pay.html, адрес сервера — параметром,
- * как у кнопки «Заявка». Пусто, если адреса не заданы: тогда кнопки не будет,
- * и сообщение уйдёт без неё (см. _payKbSafe_ в Код.gs).
- */
-function _payUrl_(num){
-  var page = String(prm('PAGE_URL','')).trim();
-  var api  = String(prm('WEBAPP_URL','')).trim();
-  if(!/^https:\/\/.+/.test(page)) return '';
-  if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(api)) return '';
-  var base = page.replace(/[?#].*$/,'');
-  if(!/\/$/.test(base)) base = base.replace(/[^\/]*$/,'');   // …/index.html → …/
-  return base+'pay.html?api='+encodeURIComponent(api)+(num?('&n='+num):'');
-}
-/**
- * Кнопка под сообщением «К оплате». Тип web_app в инлайн-клавиатуре Telegram
- * разрешает только в личном чате с ботом — у казначея так и есть.
- * Нажатие открывает страницу сразу, без опроса: минутной задержки нет.
- */
-function _payKb_(num){
-  var url = _payUrl_(num);
-  if(!url) return null;
-  return {inline_keyboard:[[{text:'💳 Провести оплату', web_app:{url:url}}]]};
-}
-function _payKbAll_(){
-  var url = _payUrl_(0);
-  if(!url) return null;
-  return {inline_keyboard:[[{text:'💳 Открыть очередь оплат', web_app:{url:url}}]]};
-}
-
-// ===================== ФОТО СЧЁТА ПОСЛЕ ПОДАЧИ =====================
-/**
- * Прикрепляет присланное фото к последней заявке этого человека.
- * Ищем в ЗАЯВКАХ снизу вверх строку с его именем не старше 30 минут.
- * Намеренно без CacheService и Properties: состояние между выполнениями —
- * ровно тот механизм, на котором ломались «Отклонить» и «Вопрос».
- * Вызывается из handleMessage_ в Код.gs.
- * @return {boolean} true, если фото обработано
- */
-function _photoToLastRequest_(m){
-  // С v2.0 вся логика — в Код.gs: счёт и платёжка разбираются в одном месте.
-  return _fileIn_(m);
-}
-
-// ===================== ПОДКЛЮЧЕНИЕ И ОТКЛЮЧЕНИЕ =====================
-/**
- * Ставит кнопку Mini App в меню бота — одну на всех.
- * PAGE_URL — адрес страницы на GitHub Pages, НЕ адрес развёртывания.
- * Работает и из редактора, и из меню таблицы.
- */
-// ===================== СТРАНИЦА ПРИЛОЖЕНИЯ ДОКУМЕНТА (v2.6) =====================
-/**
- * Отдельная страница doc.html — только приложить файл к одной заявке.
- * Устроена как форма подачи, где выбор файла работает: статичная разметка,
- * без пересборки содержимого. На странице оплат приложить файл не удавалось
- * ни Лауре, ни Ерсайыну, при том что у тех же людей и на том же телефоне
- * форма подачи файл принимала.
- *
- * Кто что может, решает сервер, а не страница:
- *   • платёжку — казначей по оплаченной заявке;
- *   • счёт — автор заявки, пока по ней не принято решение об оплате.
- */
-function mini_attachInit(initData, p){
-  try{
-    var v = _tgVerify_(initData);
-    if(!v.ok) return {ok:false, err:v.err};
-    var num = Number((p||{}).n)||0;
-    if(!num) return {ok:false, err:'Не указана заявка.'};
-    var me = getEmployees_().filter(function(x){ return x.chat===String(v.chat); })[0];
-    if(!me) return {ok:false, err:'Вы не подключены к системе. Отправьте боту /start.'};
-
-    var r = rowByNum_(num);
-    if(!r) return {ok:false, err:'Заявка №'+num+' не найдена.'};
-    var row = sh(SH.Z).getRange(r,1,1,25).getValues()[0];
-    var kind = _attachKind_(row, me, String(v.chat));
-    if(!kind.ok) return {ok:false, err:kind.err};
-
-    var w = _whatParts_(row[C.WHAT-1]);
-    return {ok:true, num:num, kind:kind.kind, name:me.name,
-      sup:String(row[C.SUP-1]||''), sum:Number(row[C.SUM-1])||0,
-      what:w.what, author:String(row[C.AUTHOR-1]||''), status:String(row[C.STATUS-1]||'')};
-  }catch(e){ return {ok:false, err:'Не удалось открыть: '+String(e).slice(0,150)}; }
-}
-
-/** Что этот человек вправе приложить к этой заявке. */
-function _attachKind_(row, me, chat){
-  var num = Number(row[C.NUM-1]), st = String(row[C.STATUS-1]||'').trim();
-  var isAuthor = String(row[C.AUTHOR-1]).trim() === me.name;
-  var isPayer  = _isPayerChat_(chat);
-  if(isTestNum_(num) && !isAuthor) return {ok:false, err:'Заявка №'+num+' тестовая — с ней работает только её автор.'};
-  if(isPayer && st === 'Оплачена') return {ok:true, kind:'pay'};
-  if(isAuthor) return {ok:true, kind:'inv'};
-  if(isPayer)  return {ok:false, err:'№'+num+' ещё не оплачена. Платёжка прикладывается после отметки оплаты.'};
-  return {ok:false, err:'Приложить документ к №'+num+' может её автор, а платёжку — казначей после оплаты.'};
-}
-
-function mini_attach(initData, p){
-  try{
-    var v = _tgVerify_(initData);
-    if(!v.ok) return {ok:false, err:v.err};
-    p = p || {};
-    var num = Number(p.num)||0, files = (p.files||[]).slice(0,3);
-    if(!num) return {ok:false, err:'Не указана заявка.'};
-    if(!files.length) return {ok:false, err:'Файл не выбран.'};
-
-    var me = getEmployees_().filter(function(x){ return x.chat===String(v.chat); })[0];
-    if(!me) return {ok:false, err:'Вы не подключены к системе.'};
-    var r = rowByNum_(num);
-    if(!r) return {ok:false, err:'Заявка №'+num+' не найдена.'};
-    var row = sh(SH.Z).getRange(r,1,1,25).getValues()[0];
-    var kind = _attachKind_(row, me, String(v.chat));
-    if(!kind.ok) return {ok:false, err:kind.err};
-
-    var n = _filesFromForm_(num, files, String(v.chat), kind.kind);
-    if(!n) return {ok:false, err:'Файл не сохранился. Пришлите его боту ответом на сообщение о заявке.'};
-    return {ok:true, num:num, kind:kind.kind, attached:n};
-  }catch(e){
-    audit_('СИСТЕМА','','MiniApp: документ не приложен','',String(e).slice(0,200));
-    return {ok:false, err:'Не удалось приложить: '+String(e).slice(0,150)};
-  }
-}
-
-/** Адрес страницы приложения документа для кнопки под сообщением. */
-function _attachUrl_(num){
-  var page = String(prm('PAGE_URL','')).trim(), api = String(prm('WEBAPP_URL','')).trim();
-  if(!/^https:\/\/.+/.test(page)) return '';
-  if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(api)) return '';
-  var base = page.replace(/[?#].*$/,'');
-  if(!/\/$/.test(base)) base = base.replace(/[^\/]*$/,'');
-  return base+'doc.html?api='+encodeURIComponent(api)+'&n='+num;
-}
-function _attachKb_(num){
-  var url = _attachUrl_(num);
-  return url ? {inline_keyboard:[[{text:'🧾 Приложить платёжку', web_app:{url:url}}]]} : null;
-}
-
-/**
- * Кнопки меню по ролям. Telegram разрешает свою кнопку на каждый чат,
- * поэтому у каждого в меню то, чем он пользуется каждый день:
- *   казначеи (Лаура, Ерсайын) → «Оплаты», очередь платежей;
- *   владелец                  → «Статус», заявки на его решении;
- *   остальные заявители       → «Заявка», форма подачи.
- * Подача при этом никуда не девается: внутри страниц оплат и статуса есть
- * переход к форме — иначе казначей, которому надо подать заявку, остался бы
- * с медленным мастером в чате.
- */
-function КНОПКИ_ПО_РОЛЯМ(){
-  var ui = SpreadsheetApp.getUi();
-  var page = String(prm('PAGE_URL','')).trim(), api = String(prm('WEBAPP_URL','')).trim();
-  if(!/^https:\/\/.+/.test(page) || !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(api))
-    return _miniSay_(ui,'❌ Сначала «📱 Настроить Mini App» — нет адреса страницы или развёртывания.');
-
-  var base = page.replace(/[?#].*$/,'');
-  if(!/\/$/.test(base)) base = base.replace(/[^\/]*$/,'');
-  function url(file){ return base+file+'?api='+encodeURIComponent(api); }
-
-  // Кнопка меню у человека одна — так устроен Telegram. В меню кладём то,
-  // чем он пользуется каждый день; второй вход есть кнопкой внутри страницы.
-  var plan = [];
-  [payerChat_(), payer2Chat_()].forEach(function(e){ if(e) plan.push([e,'Оплаты', url('pay.html')]); });
-  [roleChat_('amankali'), roleChat_('alua')].forEach(function(e){ if(e) plan.push([e,'Статус', url('status.html')]); });
-  // ИТ-хранителю — «Админ»: оттуда он открывает страницы четверых ролей
-  // в режиме просмотра. Ставится последним, поэтому перебивает «Статус».
-  getEmployees_().forEach(function(e){ if(_isAdmin_(e.name)) plan.push([e,'Админ', url('admin.html')]); });
-
-  var done=[], miss=[], seen={};
-  plan.forEach(function(x){
-    var e=x[0];
-    if(!e.chat){ miss.push(e.name+' — не прошёл /start'); return; }
-    if(seen[e.chat]) return;
-    seen[e.chat]=1;
-    var res = tgApi_('setChatMenuButton',{ chat_id:e.chat,
-      menu_button:{ type:'web_app', text:x[1], web_app:{ url:x[2] } } });
-    if(/"ok":true/.test(String(res))) done.push(e.name+' → «'+x[1]+'»');
-    else miss.push(e.name+' — '+String(res).slice(0,80));
+  // Подача никуда не делась: кнопка меню занята «Статусом», но форма
+  // открывается отсюда — иначе владелец остался бы без способа подать заявку.
+  $('newReq').addEventListener('click', function(){
+    location.href = 'index.html?api=' + encodeURIComponent(API_URL);
   });
 
-  // Всем остальным — обычная «Заявка». Ставим персонально, иначе общая
-  // кнопка меню перебьёт персональные у казначеев.
-  var full = url('index.html').replace('index.html?','?');
-  var others=0;
-  getEmployees_().forEach(function(e){
-    if(!e.chat || seen[e.chat] || !/заявител/i.test(e.role)) return;
-    seen[e.chat]=1;
-    tgApi_('setChatMenuButton',{ chat_id:e.chat,
-      menu_button:{ type:'web_app', text:'Заявка', web_app:{ url:full } } });
-    others++;
-  });
-
-  _miniSay_(ui, (done.length?'✅ '+done.join('\n✅ ')+'\n':'')+
-    '✅ Кнопка «Заявка» — остальным заявителям: '+others+'\n'+
-    (miss.length?'\n⚠️ Не поставлено: '+miss.join('; ')+'\n':'')+
-    '\nTelegram обновляет меню с задержкой до минуты.\n'+
-    'Вернуть всем «Заявку» — пункт «↩️ Вернуть кнопку «Заявка» всем».');
-}
-
-/** Откат: всем одна кнопка подачи, как было. */
-function ВЕРНУТЬ_КНОПКУ_ЗАЯВКИ(){
-  var ui = SpreadsheetApp.getUi();
-  var page = String(prm('PAGE_URL','')).trim(), api = String(prm('WEBAPP_URL','')).trim();
-  var full = page + (page.indexOf('?')>-1 ? '&' : '?') + 'api=' + encodeURIComponent(api);
-  var n=0, seen={};
-  getEmployees_().forEach(function(e){
-    if(!e.chat || seen[e.chat]) return;
-    seen[e.chat]=1; n++;
-    tgApi_('setChatMenuButton',{ chat_id:e.chat,
-      menu_button:{ type:'web_app', text:'Заявка', web_app:{ url:full } } });
-  });
-  _miniSay_(ui,'✅ Кнопка «Заявка» возвращена всем: '+n);
-}
-
-function НАСТРОИТЬ_MINIAPP(){
-  var ui = null; try{ ui = SpreadsheetApp.getUi(); }catch(e){}
-  var page = String(prm('PAGE_URL','')).trim();
-  var api  = String(prm('WEBAPP_URL','')).trim();
-
-  if(ui){
-    var r1 = ui.prompt('Шаг 1 из 2 · Адрес страницы (GitHub Pages)',
-      'Например: https://tegzy05.github.io/z463-app/\n'+
-      'Слеш на конце обязателен.\n\n'+(page?('Сейчас: '+page):'Пока не задан.'),
-      ui.ButtonSet.OK_CANCEL);
-    if(r1.getSelectedButton()!==ui.Button.OK) return;
-    if(r1.getResponseText().trim()) page = r1.getResponseText().trim();
-
-    var r2 = ui.prompt('Шаг 2 из 2 · Адрес развёртывания (Apps Script)',
-      'Развернуть → Управление развёртываниями → копка копирования адреса.\n'+
-      'Оканчивается на /exec\n\n'+(api?('Сейчас: '+api):'Пока не задан.'),
-      ui.ButtonSet.OK_CANCEL);
-    if(r2.getSelectedButton()!==ui.Button.OK) return;
-    if(r2.getResponseText().trim()) api = r2.getResponseText().trim();
-  }
-
-  if(!/^https:\/\/.+/.test(page)){
-    return _miniSay_(ui,'❌ Адрес страницы пуст или не начинается с https://\n\n'+
-      'Запущено из редактора? Окно ввода там не появляется — впишите адрес в '+
-      'ПАРАМЕТРЫ, строка PAGE_URL, и запустите снова.');
-  }
-  if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(api)){
-    return _miniSay_(ui,'❌ Адрес развёртывания не похож на рабочий.\n\n'+
-      'Ожидается вид:\nhttps://script.google.com/macros/s/AKfy…/exec\n\n'+
-      'Впишите его в ПАРАМЕТРЫ, строка WEBAPP_URL, или введите в окне.');
-  }
-
-  // Проверяем адрес ДО того, как повесить кнопку: иначе команда получит
-  // кнопку, ведущую в никуда, и узнаем мы об этом от них, а не отсюда.
-  var probe = _miniProbe_(api);
-  if(!probe.ok){
-    return _miniSay_(ui,'❌ Развёртывание не отвечает — кнопку не ставлю.\n\n'+
-      probe.msg+'\n\nПочините развёртывание и запустите ещё раз.');
-  }
-
-  setPrm('PAGE_URL', page);
-  setPrm('WEBAPP_URL', api);
-
-  // Адрес сервера уезжает в кнопку параметром. Страница на GitHub про него
-  // ничего не знает и знать не должна.
-  var full = page + (page.indexOf('?')>-1 ? '&' : '?') + 'api=' + encodeURIComponent(api);
-  if(full.length > 512){
-    return _miniSay_(ui,'❌ Итоговый адрес длиннее 512 символов — Telegram его не примет.\n\n'+full);
-  }
-
-  var res = tgApi_('setChatMenuButton',{
-    menu_button:{ type:'web_app', text:'Заявка', web_app:{ url:full } }
-  });
-  Logger.log('setChatMenuButton: '+res);
-  _miniSay_(ui, /"ok":true/.test(String(res))
-    ? '✅ Кнопка «Заявка» подключена.\n\n'+
-      'Развёртывание проверено и отвечает.\n'+
-      'Кнопка появится слева от поля ввода — Telegram обновляет меню с задержкой '+
-      'до минуты. Проверьте на себе, прежде чем показывать команде.\n\n'+full
-    : '❌ Не получилось: '+String(res).slice(0,300));
-}
-
-/**
- * Что сейчас в меню у каждого подключённого. Кнопку меню чужого чата
- * увидеть нельзя иначе как спросить Telegram — а без этого проверить,
- * доехала ли раскладка по ролям, можно только по словам людей.
- */
-function ПОКАЗАТЬ_КНОПКИ_МЕНЮ(){
-  var ui=null; try{ ui=SpreadsheetApp.getUi(); }catch(e){}
-  var out=[];
-  getEmployees_().filter(function(x){ return x.chat; }).forEach(function(x){
-    var raw=String(tgApi_('getChatMenuButton',{chat_id:x.chat}));
-    var txt=(raw.match(/"text":"([^"]*)"/)||[])[1]||'';
-    var url=((raw.match(/"url":"([^"]*)"/)||[])[1]||'').replace(/\\\//g,'/');
-    var page=(url.match(/\/([a-z_]+\.html)/)||[])[1] || (url?'index.html':'');
-    out.push((txt?'✅ ':'⚪ ')+x.name+' — '+(txt?('«'+txt+'» → '+(page||url.slice(0,40))):'обычное меню команд'));
-  });
-  var txt=out.length? out.join('\n') : 'Никто не подключён.';
-  txt='КНОПКИ МЕНЮ У ЛЮДЕЙ\n\n'+txt+
-    '\n\nПоменять раскладку — «🎛 Кнопки меню по ролям».\n'+
-    'Telegram обновляет меню у человека с задержкой до минуты.';
-  Logger.log(txt);
-  if(ui) ui.alert(txt);
-}
-
-/** Вывод и в лог, и в окно — функция запускается и из редактора, и из меню. */
-function _miniSay_(ui,txt){ Logger.log(txt); if(ui) try{ ui.alert(txt); }catch(e){} }
-
-/**
- * Дёргает адрес развёртывания так же, как это делает телефон: без учётных
- * данных Google. Именно поэтому проверка честная — UrlFetchApp не подставляет
- * куки владельца, и закрытое от анонимов развёртывание здесь провалится
- * ровно так же, как в браузере.
- * @return {{ok:boolean, msg:string}}
- */
-function _miniProbe_(url){
-  var r;
-  try{
-    r = UrlFetchApp.fetch(url, {muteHttpExceptions:true, followRedirects:true, validateHttpsCertificates:true});
-  }catch(e){
-    return {ok:false, msg:'Запрос не прошёл вовсе: '+String(e).slice(0,150)};
-  }
-  var code = r.getResponseCode();
-  var body = String(r.getContentText()||'').slice(0,4000);
-
-  if(/accounts\.google\.com|ServiceLogin|Войдите|Sign in/i.test(body))
-    return {ok:false, msg:'Развёртывание требует вход в Google.\n'+
-      'Изменить → «У кого есть доступ: Все». Если пункт «Все» недоступен — '+
-      'это политика домена rwc.kz в админконсоли (Диск и Документы → общий доступ).'};
-
-  if(/Не удалось открыть файл|Sorry, unable to open|Requested entity was not found/i.test(body) || code===404)
-    return {ok:false, msg:'По этому адресу развёртывания нет: удалено или архивировано.\n'+
-      'Создайте новое (тип: Веб-приложение, доступ: Все) и укажите его адрес.'};
-
-  if(code!==200)
-    return {ok:false, msg:'Ответ HTTP '+code+'. Первые строки:\n'+body.slice(0,200)};
-
-  // doGet отдаёт фразу со словом «ФИНЦЕНТР» — проверяем по нему, а не по
-  // названию комплекса: название меняется, служебная метка остаётся.
-  // Её отсутствие значит, что по адресу живёт
-  // не наш скрипт — например, чужое развёртывание другого проекта.
-  if(!/ФИНЦЕНТР/.test(body))
-    return {ok:false, msg:'Адрес отвечает, но это не ФИНЦЕНТР.\n'+
-      'Похоже, указано развёртывание другого проекта. Ответ:\n'+body.slice(0,200)};
-
-  return {ok:true, msg:'Отвечает, это ФИНЦЕНТР.'};
-}
-
-/** Убрать кнопку. Откат: форма и мастер бота продолжают работать. */
-function ОТКЛЮЧИТЬ_MINIAPP(){
-  var res = tgApi_('setChatMenuButton',{ menu_button:{ type:'commands' } });
-  var msg = 'Кнопка Mini App снята, меню вернулось к обычному.\n'+
-    'Подача через форму и через мастер бота работает.\n'+
-    'Кнопки «Провести оплату» у казначея продолжают работать — они не зависят от меню.\n\n'+String(res).slice(0,200);
-  Logger.log(msg);
-  try{ SpreadsheetApp.getUi().alert(msg); }catch(e){}
-}
-
-/** Сбросить кэш поставщиков — после правок в листе ПОСТАВЩИКИ. */
-function ОБНОВИТЬ_ПОСТАВЩИКОВ_В_MINIAPP(){
-  try{ CacheService.getScriptCache().remove('mini_sup'); }catch(e){}
-  var msg = 'Кэш сброшен. В Mini App теперь '+(_supList_().length-1)+' поставщиков.';
-  Logger.log(msg);
-  try{ SpreadsheetApp.getUi().alert(msg); }catch(e){}
-}
-
-/** Проверка готовности. Запускать из редактора — пишет в лог. */
-function ПРОВЕРКА_MINIAPP(){
-  var out = [];
-  var page = String(prm('PAGE_URL','')).trim();
-  out.push(/^https:\/\//.test(page) ? '✅ PAGE_URL задан: '+page
-                                    : '❌ PAGE_URL пуст — кнопке некуда вести');
-  out.push(props().getProperty('TG_TOKEN') ? '✅ Токен бота на месте'
-                                           : '❌ Токена нет — подпись проверить нечем');
-  out.push(typeof doPost==='function' ? '✅ doPost на месте (точка приёма от страницы)'
-                                      : '❌ doPost не найден');
-
-  // Главная проверка. Именно здесь ловится «Load failed» на телефоне:
-  // мёртвое развёртывание, закрытый доступ, чужой проект по адресу.
-  var api = String(prm('WEBAPP_URL','')).trim();
-  if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(api)){
-    out.push('❌ WEBAPP_URL пуст или не оканчивается на /exec');
-  } else {
-    var p = _miniProbe_(api);
-    out.push(p.ok ? '✅ Развёртывание отвечает анонимно: '+api
-                  : '❌ РАЗВЁРТЫВАНИЕ НЕДОСТУПНО — на телефоне будет «Load failed»\n   '+p.msg);
-  }
-
-  var mb = String(tgApi_('getChatMenuButton',{}));
-  out.push(/web_app/.test(mb) ? '✅ Кнопка Mini App подключена к боту'
-                              : '❌ Кнопка не подключена — запустите НАСТРОИТЬ_MINIAPP');
-  // Кнопка могла остаться от прошлой настройки и вести на старый адрес.
-  var btnUrl = (String(mb).match(/"url":"([^"]+)"/)||[])[1] || '';
-  btnUrl = btnUrl.replace(/\\\//g,'/');
-  if(btnUrl){
-    if(btnUrl.indexOf('api=')<0)
-      out.push('⚠️ В кнопке нет параметра api= — страница возьмёт резервный адрес из index.html.\n'+
-               '   Запустите НАСТРОИТЬ_MINIAPP, чтобы адрес приходил из таблицы.');
-    else if(api && btnUrl.indexOf(encodeURIComponent(api))<0)
-      out.push('❌ Кнопка ведёт на ДРУГОЙ адрес развёртывания, чем WEBAPP_URL.\n'+
-               '   В кнопке: '+btnUrl+'\n   Запустите НАСТРОИТЬ_MINIAPP.');
-    else out.push('✅ Кнопка передаёт актуальный адрес развёртывания');
-  }
-
-  // v1.3: страница оплат. Проверяем, что файл реально лежит на GitHub Pages
-  // и это наш файл — по служебной метке в <head>.
-  var payUrl = _payUrl_(0);
-  if(!payUrl) out.push('❌ Кнопка оплаты не соберётся: нужны PAGE_URL и WEBAPP_URL');
-  else {
-    try{
-      var pr = UrlFetchApp.fetch(payUrl.split('?')[0], {muteHttpExceptions:true, followRedirects:true});
-      var pOk = pr.getResponseCode()===200 && /name="z463-page" content="pay"/.test(pr.getContentText());
-      out.push(pOk ? '✅ Страница оплат pay.html опубликована'
-                   : '❌ pay.html не найдена (HTTP '+pr.getResponseCode()+') — файл нужно положить в репозиторий рядом с index.html');
-    }catch(e){ out.push('❌ pay.html не проверилась: '+String(e).slice(0,120)); }
-  }
-  var ye = payer2Chat_();
-  out.push(ye && ye.chat ? '✅ Второй казначей (счета ТОО) подключён: '+ye.name
-                         : '⚠️ Ерсайын не найден или не прошёл /start — платежи со счетов компании некому проводить');
-  var accs = _miniAccounts_(), nCo = accs.filter(function(a){ return a.company; }).length;
-  out.push(nCo ? '✅ Счетов компании в листе СЧЕТА: '+nCo
-               : '⚠️ Ни один счёт не опознан как счёт компании — проверьте колонку B в СЧЕТА и параметр ЮРЛИЦО_КОМПАНИИ');
-  var la = payerChat_();
-  out.push(la && la.chat ? '✅ Казначей подключён: '+la.name
-                         : '❌ Казначей не найден в матрице или не прошёл /start — кнопки оплаты некому слать');
-
-  var wh = String(tgApi_('getWebhookInfo',{}));
-  out.push(wh.indexOf('"url":""')>-1 ? '✅ Вебхук снят (Mini App его не требует)'
-                                     : '❌ ВЕБХУК ВКЛЮЧЁН — кнопки согласования перестанут работать');
-
-  var ppl = _peopleList_().length;
-  var noChat = getEmployees_().filter(function(x){ return /заявител/i.test(x.role) && !x.chat; });
-  out.push('ℹ️ Заявителей в матрице: '+ppl);
-  if(noChat.length) out.push('⚠️ Не прошли /start и НЕ смогут подать через Mini App ('+noChat.length+'): '+
-    noChat.map(function(x){return x.name;}).join(', '));
-  else out.push('✅ Все заявители прошли /start');
-
-  out.push('');
-  out.push('С версии 1.2 адрес развёртывания в index.html на GitHub не хранится.');
-  out.push('Сменили развёртывание — запустите НАСТРОИТЬ_MINIAPP, и всё сойдётся.');
-
-  var txt = out.join('\n');
-  Logger.log(txt);
-  try{ SpreadsheetApp.getUi().alert(txt); }catch(e){}
-}
+  load();
+})();
+</script>
+</body>
+</html>
