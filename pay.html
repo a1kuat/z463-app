@@ -8,7 +8,7 @@
 <!--
   ФИНЦЕНТР Z-463 — экран казначея. Лежит в репозитории z463-app рядом с index.html.
 
-  Версия 1.6 · 30.09.2026
+  Версия 1.7 · 26.10.2026
 
   v1.6: режим просмотра для ИТ-хранителя (?as=Имя): страница показывает
   очередь чужими глазами и прячет все действия. Запрет держится на сервере,
@@ -268,6 +268,8 @@
   var $ = function(id){ return document.getElementById(id); };
 // ---------- вопрос по заявке ----------
   var askOpen = {};      // num → открыта ли форма вопроса
+  var upOpen  = {};      // num → открыта ли форма передачи владельцу
+  var upWhy   = {};      // num → что смущает (переживает перерисовку)
   function askBox(it, dis){
     var wrap = el('div','askw');
     if(!askOpen[it.num]){
@@ -308,6 +310,42 @@
     cancel.onclick = function(){ askOpen[it.num]=false; render(); };
     row.appendChild(go); row.appendChild(cancel);
     wrap.appendChild(sel); wrap.appendChild(ta); wrap.appendChild(row);
+    return wrap;
+  }
+
+  // ---------- передать владельцу на решение ----------
+  // Не отказ и не вопрос: заявка снимается из очереди и ждёт решения
+  // владельца. Нужно, когда платить казначей не готов, но и отбрасывать
+  // заявку заявителю не за что — решать должен владелец.
+  function upBox(it, dis){
+    var wrap = el('div','askw');
+    if(!upOpen[it.num]){
+      var b = el('button','clip','🖐 Передать ' + (D.ownerName || 'Аманкали') + ' на решение');
+      b.type='button'; b.disabled = dis;
+      b.onclick = function(){ upOpen[it.num] = true; errOf[it.num] = ''; render(); };
+      wrap.appendChild(b);
+      return wrap;
+    }
+    wrap.appendChild(el('p','lbl','Что смущает — это увидит ' + (D.ownerName || 'Аманкали')));
+    var ta = document.createElement('textarea');
+    ta.className='askTa'; ta.rows=2; ta.maxLength=300; ta.disabled = dis;
+    ta.placeholder = 'например: условия не те, о которых договаривались';
+    ta.value = upWhy[it.num] || '';
+    ta.oninput = function(){ upWhy[it.num] = ta.value; var g=$('up'+it.num);
+      if(g) g.disabled = ta.value.trim().length < 3; };
+    wrap.appendChild(ta);
+    var row = el('div','askRow');
+    var go = el('button','', dis ? 'Передаю…' : 'Передать');
+    go.id = 'up'+it.num; go.type='button';
+    go.disabled = dis || String(upWhy[it.num]||'').trim().length < 3;
+    go.onclick = function(){ payUp(it); };
+    var cancel = el('button','','Отмена');
+    cancel.type='button'; cancel.disabled = dis;
+    cancel.onclick = function(){ upOpen[it.num]=false; render(); };
+    row.appendChild(go); row.appendChild(cancel);
+    wrap.appendChild(row);
+    wrap.appendChild(el('p','hint','Заявка уйдёт из очереди и вернётся в неё, если ' +
+      (D.ownerName || 'Аманкали') + ' одобрит. Заявитель увидит, что платёж задержан, а не отклонён.'));
     return wrap;
   }
 
@@ -672,6 +710,9 @@
     // второго казначея. Статус при этом не меняется — заявка остаётся в
     // очереди: платёж никто не отменял, казначей просто уточняет.
     b.appendChild(askBox(it, dis));
+    // Передача владельцу — только тому, кто платит сам. Владельцу,
+    // подменяющему казначея, передавать некому: он и есть решающий.
+    if(D.role!=='owner') b.appendChild(upBox(it, dis));
 
     var go = el('button','go', dis ? 'Отмечаю…' : 'Отметить оплату ' + money(cur));
     go.type = 'button'; go.id = 'go'+it.num;
@@ -863,6 +904,25 @@
       api('raise', {num:it.num, sum:it.sum, factSum:cur, why:why}).then(function(r){
         if(r.stale) r.err += ' Нажмите «Обновить» вверху.';
         settle(it, r, {kind:'routed', note:'на согласование: ' + (r.to||'') + ', ' + money(cur)});
+      });
+    });
+  }
+
+  function payUp(it){
+    var why = String(upWhy[it.num]||'').trim();
+    if(why.length < 3){ errOf[it.num] = 'Напишите, что смущает.'; render(); return; }
+    ask('№' + it.num + ', ' + short(it.sup, 40) + '\n' + money(it.sum) +
+        '\n\nПередать ' + (D.ownerName || 'Аманкали') + ' на решение?\nИз очереди оплат заявка уйдёт.')
+    .then(function(ok){
+      if(!ok) return;
+      busy[it.num] = true; errOf[it.num] = ''; render();
+      api('payUp', {num:it.num, sum:it.sum, why:why}).then(function(r){
+        if(r && r.ok){ upOpen[it.num] = false; upWhy[it.num] = ''; }
+        settle(it, r, {kind:'routed', note:'на решении: ' + ((r && r.to) || 'владелец')});
+      }).catch(function(){
+        busy[it.num] = false;
+        errOf[it.num] = 'Ответ не пришёл. Нажмите «Обновить» и посмотрите, ушла ли заявка из очереди.';
+        render();
       });
     });
   }
