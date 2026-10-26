@@ -6,7 +6,13 @@
 <title>Заявка на оплату</title>
 <!--
   ФИНЦЕНТР TruckStop Z-463 — экран подачи заявки (Telegram Mini App)
-  Версия 1.9 · 01.10.2026 · репозиторий z463-app
+  Версия 2.0 · 26.10.2026 · репозиторий z463-app
+
+  v2.0: после «Заявка принята» — возврат на свою страницу: казначею в
+  очередь оплат, решающему в список заявок. Раньше единственной кнопкой
+  было «Закрыть»: Mini App закрывался целиком, и очередь приходилось
+  открывать заново из чата. Адрес страницы приходит из init (backTo) и
+  сверяется со списком известных: подставлять в переход что угодно нельзя.
 
   v1.8: число для регулярного платежа выбирается тапом по сетке 1–31,
   а не набирается на клавиатуре. Под сеткой сразу видно, когда уйдёт
@@ -181,6 +187,11 @@
   .done p{ color:var(--muted); margin:0 0 26px; }
   .done button{ font:inherit; font-size:16px; padding:14px 30px; border:none;
                 border-radius:12px; background:var(--card); color:var(--fg); cursor:pointer; }
+  /* Возврат на свою страницу — основное действие: человек пришёл сюда из
+     очереди и почти всегда идёт обратно, а не закрывает Mini App. */
+  .done #backBtn{ display:block; width:100%; background:var(--accent); color:var(--onAccent); }
+  .done #backBtn + button{ margin-top:10px; background:none; color:var(--muted);
+                box-shadow:inset 0 0 0 1px var(--line); }
 </style>
 </head>
 <body>
@@ -297,6 +308,7 @@
   <div>Заявка принята</div>
   <div class="num" id="doneNum"></div>
   <p id="doneText"></p>
+  <button id="backBtn" class="hidden"></button>
   <button id="closeBtn">Закрыть</button>
 </div>
 
@@ -323,7 +335,8 @@
 
   var S = { suppliers:[], sup:'', isNew:false, cash:'Безнал', line:'', n1:50000, sending:false,
             ready:false,     // ready — пришёл ли init: до него подавать нечего
-            regDay:0 };      // выбранное число для регулярного платежа
+            regDay:0,        // выбранное число для регулярного платежа
+            backTo:null };   // куда вернуться после подачи (приходит из init)
 
   function $(id){ return document.getElementById(id); }
   function show(el,on){ el.classList[on?'remove':'add']('hidden'); }
@@ -416,6 +429,9 @@
     S.ready = true;
     S.suppliers = r.suppliers || [];
     S.n1 = r.n1 || 50000;
+    // Страницу возврата берём только из известного списка: адрес приходит
+    // ответом сервера, и подставлять в location.href что угодно нельзя.
+    S.backTo = (r.backTo && ['pay.html','status.html'].indexOf(r.backTo.page) > -1) ? r.backTo : null;
     $('who').textContent = r.name + (r.unit ? ' · ' + r.unit : '');
     if(r.needsLine){ show($('lineField'),true); S.line = 'Текущая работа (RUN)'; }
     $('supQ').disabled = false;
@@ -691,6 +707,13 @@
         : S.isNew
         ? 'Новый поставщик добавлен — Лаура заполнит его профиль. Ответы придут в чат с ботом.'
         : 'Ответы по заявке придут в чат с ботом. Фото счёта можно отправить туда же.';
+      // Возврат на страницу, с которой пришли. Mini App живёт в одном окне,
+      // поэтому это обычный переход: назад человек идёт системной стрелкой.
+      if(S.backTo && API_URL!==API_FALLBACK){
+        var bb = $('backBtn');
+        bb.textContent = '⬅️ ' + (S.backTo.label || 'Назад');
+        show(bb, true);
+      }
       show($('done'),true);
       if(tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
     }).catch(function(e){
@@ -703,6 +726,11 @@
       err('Ответ от сервера не пришёл. Заявка, скорее всего, всё-таки подана — '+
           'проверьте сообщение от бота в чате, прежде чем подавать заново.');
     });
+  });
+
+  $('backBtn').addEventListener('click', function(){
+    if(!S.backTo || API_URL===API_FALLBACK) return;
+    location.href = S.backTo.page + '?api=' + encodeURIComponent(API_URL);
   });
 
   $('closeBtn').addEventListener('click', function(){
